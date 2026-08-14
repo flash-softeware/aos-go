@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/aos/sdk-go/initiator"
+	"github.com/Esubalew-Sintie/aos-auth-go/initiator"
 )
 
 // Config exposes the required setup payload for the AOS SDK.

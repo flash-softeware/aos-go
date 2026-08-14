@@ -1,4 +1,4 @@
-module github.com/aos/sdk-go
+module github.com/Esubalew-Sintie/aos-auth-go
 
 go 1.25.0
 

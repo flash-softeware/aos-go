@@ -1,6 +1,6 @@
 package aos
 
-import "github.com/aos/sdk-go/internal/platform/events"
+import "github.com/Esubalew-Sintie/aos-auth-go/internal/platform/events"
 
 // Event names for application hooks.
 const (

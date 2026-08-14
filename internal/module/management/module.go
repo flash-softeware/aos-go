@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/aos/sdk-go/internal/constant/dto/response"
-	"github.com/aos/sdk-go/internal/storage"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/response"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/storage"
 )
 
 type Module struct {

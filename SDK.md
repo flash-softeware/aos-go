@@ -6,12 +6,12 @@ AOS provides **identity infrastructure**. Your application owns **business struc
 
 | Package | npm / Go module | Role |
 |---------|-----------------|------|
-| Go SDK | `github.com/aos/sdk-go` | Backend embedded platform |
+| Go SDK | `github.com/Esubalew-Sintie/aos-auth-go` | Backend embedded platform |
 | Frontend client | `aos-auth` | Login, MFA, passkeys, authz, session context |
 | CLI | `aos-cli` (`aos` command) | Migrate, bootstrap, scaffold |
 
 ```bash
-go get github.com/aos/sdk-go@v0.1.0
+go get github.com/Esubalew-Sintie/aos-auth-go@v0.1.0
 npm install aos-auth aos-cli
 ```
 

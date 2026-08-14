@@ -7,9 +7,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/aos/sdk-go/internal/constant/dto/response"
-	"github.com/aos/sdk-go/internal/platform/webauthn"
-	"github.com/aos/sdk-go/internal/storage"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/response"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/platform/webauthn"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/storage"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )

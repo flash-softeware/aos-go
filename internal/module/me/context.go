@@ -3,7 +3,7 @@ package me
 import (
 	"context"
 
-	"github.com/aos/sdk-go/internal/constant/dto/response"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/response"
 )
 
 func isOrgAdmin(perms []string) bool {

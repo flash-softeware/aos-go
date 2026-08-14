@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/aos/sdk-go/internal/platform/totp"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/platform/totp"
 	"github.com/google/uuid"
 )
 

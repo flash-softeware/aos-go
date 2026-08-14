@@ -7,8 +7,8 @@ import (
 	"encoding/hex"
 	"time"
 
-	"github.com/aos/sdk-go/internal/platform/events"
-	"github.com/aos/sdk-go/internal/storage"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/platform/events"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/storage"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )

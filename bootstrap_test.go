@@ -3,7 +3,7 @@ package aos_test
 import (
 	"testing"
 
-	"github.com/aos/sdk-go/internal/platform/permissions"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/platform/permissions"
 )
 
 func TestPermissionWildcardsDocumented(t *testing.T) {

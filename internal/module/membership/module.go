@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/aos/sdk-go/internal/platform/events"
-	"github.com/aos/sdk-go/internal/storage"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/platform/events"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/storage"
 )
 
 type Module struct {

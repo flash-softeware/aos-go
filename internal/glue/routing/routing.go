@@ -3,14 +3,14 @@ package routing
 import (
 	"net/http"
 
-	"github.com/aos/sdk-go/internal/constant/dto/response"
-	"github.com/aos/sdk-go/internal/handler/rest/http/auth"
-	"github.com/aos/sdk-go/internal/handler/rest/http/authz"
-	"github.com/aos/sdk-go/internal/handler/rest/http/iam"
-	"github.com/aos/sdk-go/internal/handler/rest/http/me"
-	"github.com/aos/sdk-go/internal/handler/rest/http/management"
-	"github.com/aos/sdk-go/internal/handler/rest/http/organization"
-	"github.com/aos/sdk-go/internal/handler/rest/http/user"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/response"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/handler/rest/http/auth"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/handler/rest/http/authz"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/handler/rest/http/iam"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/handler/rest/http/me"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/handler/rest/http/management"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/handler/rest/http/organization"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/handler/rest/http/user"
 	"github.com/go-chi/chi/v5"
 )
 

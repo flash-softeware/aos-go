@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 
-	dto "github.com/aos/sdk-go/internal/constant/dto/request"
-	"github.com/aos/sdk-go/internal/constant/dto/response"
-	"github.com/aos/sdk-go/internal/constant/errors"
-	"github.com/aos/sdk-go/internal/module/iam"
+	dto "github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/request"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/response"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/errors"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/module/iam"
 )
 
 type IamHandler struct {

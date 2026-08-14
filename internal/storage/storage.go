@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/aos/sdk-go/internal/constant/dto/response"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/response"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )

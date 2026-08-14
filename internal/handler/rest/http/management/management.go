@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"strings"
 
-	dto "github.com/aos/sdk-go/internal/constant/dto/request"
-	"github.com/aos/sdk-go/internal/constant/dto/response"
-	"github.com/aos/sdk-go/internal/constant/errors"
-	"github.com/aos/sdk-go/internal/module/management"
-	"github.com/aos/sdk-go/internal/platform/identity"
+	dto "github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/request"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/response"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/errors"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/module/management"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/platform/identity"
 	"github.com/go-chi/chi/v5"
 )
 

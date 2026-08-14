@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/aos/sdk-go/internal/constant/dto/response"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/response"
 )
 
 // UserOrganization is a resource the user belongs to (e.g. merchant org).

@@ -6,8 +6,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/aos/sdk-go/internal/constant/dto/response"
-	webauthnplatform "github.com/aos/sdk-go/internal/platform/webauthn"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/response"
+	webauthnplatform "github.com/Esubalew-Sintie/aos-auth-go/internal/platform/webauthn"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 

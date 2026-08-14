@@ -5,16 +5,16 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/aos/sdk-go/internal/constant/dto/response"
-	"github.com/aos/sdk-go/internal/module/auth"
-	"github.com/aos/sdk-go/internal/module/iam"
-	"github.com/aos/sdk-go/internal/module/membership"
-	"github.com/aos/sdk-go/internal/module/organization"
-	permModule "github.com/aos/sdk-go/internal/module/permissions"
-	resModule "github.com/aos/sdk-go/internal/module/resources"
-	userModule "github.com/aos/sdk-go/internal/module/user"
-	"github.com/aos/sdk-go/internal/platform/events"
-	"github.com/aos/sdk-go/internal/platform/identity"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/response"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/module/auth"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/module/iam"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/module/membership"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/module/organization"
+	permModule "github.com/Esubalew-Sintie/aos-auth-go/internal/module/permissions"
+	resModule "github.com/Esubalew-Sintie/aos-auth-go/internal/module/resources"
+	userModule "github.com/Esubalew-Sintie/aos-auth-go/internal/module/user"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/platform/events"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/platform/identity"
 )
 
 func UserIDFromContext(ctx context.Context) string {

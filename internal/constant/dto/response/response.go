@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/aos/sdk-go/internal/constant/errors"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/errors"
 	validation "github.com/go-ozzo/ozzo-validation/v4"
 )
 

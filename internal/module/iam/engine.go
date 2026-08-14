@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/aos/sdk-go/internal/storage"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/storage"
 )
 
 type Engine struct {

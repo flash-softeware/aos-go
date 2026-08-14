@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aos/sdk-go/internal/storage"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/storage"
 	"github.com/google/uuid"
 )
 

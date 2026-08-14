@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/aos/sdk-go/internal/constant/dto/response"
-	"github.com/aos/sdk-go/internal/constant/errors"
-	"github.com/aos/sdk-go/internal/module/auth"
-	"github.com/aos/sdk-go/internal/platform/identity"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/response"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/errors"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/module/auth"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/platform/identity"
 )
 
 type Auth struct {

@@ -3,7 +3,7 @@ package resources
 import (
 	"context"
 
-	"github.com/aos/sdk-go/internal/storage"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/storage"
 )
 
 type Module struct {

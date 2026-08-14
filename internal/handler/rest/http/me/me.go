@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 
-	dto "github.com/aos/sdk-go/internal/constant/dto/request"
-	"github.com/aos/sdk-go/internal/constant/dto/response"
-	"github.com/aos/sdk-go/internal/constant/errors"
-	meModule "github.com/aos/sdk-go/internal/module/me"
-	"github.com/aos/sdk-go/internal/platform/identity"
+	dto "github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/request"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/response"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/errors"
+	meModule "github.com/Esubalew-Sintie/aos-auth-go/internal/module/me"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/platform/identity"
 )
 
 type MeHandler struct {
