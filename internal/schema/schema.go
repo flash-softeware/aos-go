@@ -1,5 +1,6 @@
 package schema
 
+// Deprecated: use RunMigrations and Migrations instead.
 const MultiTenantSchema = `
 
 
