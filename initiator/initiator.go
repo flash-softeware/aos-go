@@ -152,7 +152,10 @@ func (i *Initiator) Migrate(ctx context.Context) error {
 		schemaToRun = strings.ReplaceAll(schemaToRun, "tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,", "")
 	}
 
-	_, _ = i.DB.Exec(ctx, schemaToRun)
+	_, err := i.DB.Exec(ctx, schemaToRun)
+	if err != nil {
+		return err
+	}
 
 	phaseSQL := `
 		ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id) ON DELETE SET NULL;
@@ -263,6 +266,6 @@ func (i *Initiator) Migrate(ctx context.Context) error {
 			UNIQUE(tenant_id, provider)
 		);
 	`
-	_, err := i.DB.Exec(ctx, phaseSQL)
+	_, err = i.DB.Exec(ctx, phaseSQL)
 	return err
 }

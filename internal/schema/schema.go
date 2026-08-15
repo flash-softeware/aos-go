@@ -288,8 +288,6 @@ CREATE TABLE user_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
     user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     tenant_id UUID REFERENCES tenants (id) ON DELETE CASCADE,
-    organization_id UUID REFERENCES organizations (id) ON DELETE SET NULL,
-    role_id UUID REFERENCES roles (id) ON DELETE SET NULL,
     session_token_hash TEXT NOT NULL,
     ip_address INET,
     device_info JSONB DEFAULT '{}'::jsonb,
