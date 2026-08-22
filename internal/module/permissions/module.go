@@ -4,15 +4,24 @@ import (
 	"context"
 	"strings"
 
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/entities"
 	"github.com/Esubalew-Sintie/aos-auth-go/internal/storage"
+	"github.com/google/uuid"
 )
 
+// Module manages the global permission catalog. Permission codes are never org-scoped;
+// organization context is enforced on roles and role assignments when organizations are enabled.
 type Module struct {
-	store storage.Repository
+	store       storage.Storage
+	orgsEnabled bool
 }
 
-func New(store storage.Repository) *Module {
-	return &Module{store: store}
+func New(store storage.Storage, orgsEnabled bool) *Module {
+	return &Module{store: store, orgsEnabled: orgsEnabled}
+}
+
+func (m *Module) OrganizationsEnabled() bool {
+	return m.orgsEnabled
 }
 
 type RegisterInput struct {
@@ -29,17 +38,15 @@ func (m *Module) Register(ctx context.Context, in RegisterInput) (string, error)
 		resourceType, action = splitCode(in.Code)
 	}
 
-	tx, err := m.store.BeginTx(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback(ctx)
-
-	permID, err := m.store.InsertPermission(ctx, tx, resourceType, action, in.Code, in.Description)
-	if err != nil {
-		return "", err
-	}
-	return permID, tx.Commit(ctx)
+	permID := uuid.New().String()
+	err := m.store.Permissions().Create(ctx, &entities.Permission{
+		ID:           permID,
+		Code:         in.Code,
+		Description:  in.Description,
+		ResourceType: resourceType,
+		Action:       action,
+	})
+	return permID, err
 }
 
 func (m *Module) RegisterMany(ctx context.Context, codes ...string) error {

@@ -2,63 +2,28 @@ package aos
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"strings"
 
+	aoserrors "github.com/Esubalew-Sintie/aos-auth-go/internal/constant/errors"
+
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/entities"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/storage"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
-const defaultTenantType = "APPLICATION"
-
 func (a *AOS) Bootstrap(ctx context.Context, in BootstrapInput) (*BootstrapResult, error) {
-	count, err := a.App.Store.CountTenants(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if count > 0 {
-		return nil, errors.New("platform already initialized")
+	if _, err := a.app.Store.Roles().GetByName(ctx, "Owner"); err == nil {
+		return nil, aoserrors.ErrPlatformAlreadyInitialized
 	}
 
 	if in.Owner.Email == "" || in.Owner.Password == "" {
-		return nil, errors.New("owner email and password are required")
+		return nil, aoserrors.ErrOwnerCredentialsRequired
 	}
-
-	tx, err := a.App.Store.BeginTx(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
 
 	tenantName := in.TenantName
 	if tenantName == "" {
 		tenantName = "Default Application"
-	}
-	slug := strings.ToLower(strings.ReplaceAll(tenantName, " ", "-"))
-
-	tenantID, err := a.App.Store.InsertTenant(ctx, tx, tenantName, slug, defaultTenantType)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := a.App.Store.InsertTenantResource(ctx, tx, tenantID); err != nil {
-		return nil, err
-	}
-
-	var orgID string
-	if in.WithDefaultOrg {
-		orgName := in.OrgName
-		if orgName == "" {
-			orgName = "Default Organization"
-		}
-		orgSlug := strings.ToLower(strings.ReplaceAll(orgName, " ", "-"))
-		orgID, err = a.App.Store.InsertOrganization(ctx, tx, tenantID, orgName, orgSlug)
-		if err != nil {
-			return nil, err
-		}
-		if err := a.App.Store.InsertOrgResource(ctx, tx, tenantID, orgID); err != nil {
-			return nil, err
-		}
 	}
 
 	firstName := in.Owner.FirstName
@@ -70,68 +35,145 @@ func (a *AOS) Bootstrap(ctx context.Context, in BootstrapInput) (*BootstrapResul
 		lastName = "Admin"
 	}
 
-	userID, err := a.App.Store.InsertUser(ctx, tx, in.Owner.Email, firstName, lastName)
-	if err != nil {
-		return nil, err
-	}
-
 	hashed, err := bcrypt.GenerateFromPassword([]byte(in.Owner.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, err
 	}
-	if err := a.App.Store.InsertAuthAccount(ctx, tx, userID, string(hashed)); err != nil {
-		return nil, err
-	}
 
-	ownerRoleID, err := a.App.Store.InsertSystemRole(ctx, tx, tenantID, "Owner", "AOS installation administrator", true)
+	var (
+		rootBusinessID string
+		orgBusinessID  string
+		userID         string
+	)
+
+	err = a.app.Store.Transaction(ctx, func(tx storage.Storage) error {
+		rootBusinessID = uuid.New().String()
+		rootIAMID := uuid.New().String()
+		if err := tx.Resources().Create(ctx, &entities.Resource{
+			ID:           rootIAMID,
+			ResourceType: "INSTALLATION",
+			ResourceID:   rootBusinessID,
+			Name:         tenantName,
+		}); err != nil {
+			return err
+		}
+
+		userID = uuid.New().String()
+		if err := tx.Users().Create(ctx, &entities.User{
+			ID:        userID,
+			Email:     in.Owner.Email,
+			FirstName: firstName,
+			LastName:  lastName,
+			Status:    "ACTIVE",
+		}); err != nil {
+			return err
+		}
+
+		if err := tx.AuthAccounts().Create(ctx, &entities.AuthAccount{
+			ID:       uuid.New().String(),
+			UserID:   userID,
+			Provider: "LOCAL",
+			Token:    string(hashed),
+		}); err != nil {
+			return err
+		}
+
+		ownerRoleID := uuid.New().String()
+		if err := tx.Roles().Create(ctx, &entities.Role{
+			ID:          ownerRoleID,
+			Name:        "Owner",
+			Description: "AOS installation administrator",
+			IsSystem:    true,
+		}); err != nil {
+			return err
+		}
+
+		if err := tx.Permissions().Create(ctx, &entities.Permission{
+			ID:           uuid.New().String(),
+			Code:         "*",
+			Description:  "Full access",
+			ResourceType: "*",
+			Action:       "*",
+		}); err != nil {
+			return err
+		}
+
+		if _, err := tx.Roles().GrantPermission(ctx, ownerRoleID, "*"); err != nil {
+			return err
+		}
+
+		membershipID := uuid.New().String()
+		if err := tx.Memberships().Create(ctx, &entities.Membership{
+			ID:           membershipID,
+			UserID:       userID,
+			ResourceType: "INSTALLATION",
+			ResourceID:   rootBusinessID,
+			Status:       "ACTIVE",
+		}); err != nil {
+			return err
+		}
+
+		if err := tx.Memberships().AssignRole(ctx, membershipID, rootIAMID, ownerRoleID); err != nil {
+			return err
+		}
+
+		if in.WithDefaultOrg {
+			orgName := in.OrgName
+			if orgName == "" {
+				orgName = "Default Organization"
+			}
+			orgBusinessID = uuid.New().String()
+			orgIAMID := uuid.New().String()
+			if err := tx.Resources().Create(ctx, &entities.Resource{
+				ID:           orgIAMID,
+				ResourceType: "ORGANIZATION",
+				ResourceID:   orgBusinessID,
+				ParentID:     rootIAMID,
+				Name:         orgName,
+			}); err != nil {
+				return err
+			}
+
+			orgMembershipID := uuid.New().String()
+			if err := tx.Memberships().Create(ctx, &entities.Membership{
+				ID:           orgMembershipID,
+				UserID:       userID,
+				ResourceType: "ORGANIZATION",
+				ResourceID:   orgBusinessID,
+				Status:       "ACTIVE",
+			}); err != nil {
+				return err
+			}
+			if err := tx.Memberships().AssignRole(ctx, orgMembershipID, orgIAMID, ownerRoleID); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	permID, err := a.App.Store.InsertPermission(ctx, tx, "*", "*", "*", "Full access")
-	if err != nil {
-		return nil, err
-	}
-	if err := a.App.Store.InsertRolePerm(ctx, tx, ownerRoleID, permID); err != nil {
-		return nil, err
-	}
-
-	membershipID, err := a.App.Store.InsertMembership(ctx, tx, tenantID, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	iamResourceID, err := a.App.Store.GetIAMResource(ctx, tx, tenantID, "TENANT")
-	if err != nil {
-		return nil, err
-	}
-	if err := a.App.Store.InsertRoleAssignment(ctx, tx, membershipID, iamResourceID, ownerRoleID); err != nil {
-		return nil, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-
-	loginResult, err := a.App.Auth.Login(ctx, in.Owner.Email, in.Owner.Password)
+	loginResult, err := a.app.Auth.Login(ctx, in.Owner.Email, in.Owner.Password)
 	if err != nil {
 		return nil, err
 	}
 	if loginResult.MfaRequired {
-		return nil, errors.New("MFA required during bootstrap")
+		return nil, aoserrors.ErrMfaRequired
 	}
 
 	return &BootstrapResult{
 		Message:      "Bootstrap successful",
-		TenantID:     tenantID,
+		TenantID:     rootBusinessID,
 		UserID:       userID,
 		SessionToken: loginResult.SessionToken,
-		OrgID:        orgID,
+		OrgID:        orgBusinessID,
 	}, nil
 }
 
 func (a *AOS) GenerateResource(ctx context.Context, tenantID, resourceName string) (*GenerateResourceResult, error) {
-	res, err := a.App.Management.GenerateResource(ctx, tenantID, resourceName)
+	res, err := a.app.Management.GenerateResource(ctx, tenantID, resourceName)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +193,10 @@ func (a *AOS) GenerateResource(ctx context.Context, tenantID, resourceName strin
 // EnsureBootstrapInput validates bootstrap configuration.
 func EnsureBootstrapInput(in BootstrapInput) error {
 	if in.Owner.Email == "" || in.Owner.Password == "" {
-		return fmt.Errorf("owner email and password are required")
+		return aoserrors.ErrOwnerCredentialsRequired
+	}
+	if strings.TrimSpace(in.Owner.Email) == "" {
+		return aoserrors.ErrOwnerCredentialsRequired
 	}
 	return nil
 }

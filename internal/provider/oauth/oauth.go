@@ -1,15 +1,49 @@
-package auth
+package oauth
 
 import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/entities"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/errors"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/provider/result"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/provider/session"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/storage"
+	"github.com/google/uuid"
 )
+
+type Credentials struct {
+	ClientID     string
+	ClientSecret string
+}
+
+type Provider struct {
+	store    storage.Storage
+	sessions *session.Service
+	creds    map[string]Credentials // upper-case provider name → creds
+}
+
+func New(store storage.Storage, creds map[string]Credentials) *Provider {
+	if creds == nil {
+		creds = make(map[string]Credentials)
+	}
+	return &Provider{
+		store:    store,
+		sessions: session.New(store),
+		creds:    creds,
+	}
+}
+
+func (p *Provider) Name() string { return "oauth" }
+
+func (p *Provider) SetCredentials(provider string, cred Credentials) {
+	p.creds[strings.ToUpper(strings.TrimSpace(provider))] = cred
+}
 
 type oauthState struct {
 	TenantID    string `json:"tenant_id"`
@@ -17,12 +51,12 @@ type oauthState struct {
 	Provider    string `json:"provider"`
 }
 
-func encodeOAuthState(state oauthState) string {
+func encodeState(state oauthState) string {
 	raw, _ := json.Marshal(state)
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
 
-func decodeOAuthState(encoded string) (oauthState, error) {
+func decodeState(encoded string) (oauthState, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil {
 		return oauthState{}, err
@@ -34,15 +68,22 @@ func decodeOAuthState(encoded string) (oauthState, error) {
 	return state, nil
 }
 
-func (m *Module) SocialLoginURL(ctx context.Context, provider, tenantID, callbackURL, backendCallbackURL string) (string, error) {
-	provider = strings.ToUpper(provider)
-	clientID, clientSecret, err := m.store.GetOAuthProviderCredentials(ctx, tenantID, provider)
-	if err != nil || clientID == "" || clientSecret == "" {
-		return "", errors.New("OAuth provider not configured")
+func (p *Provider) credentials(provider string) (Credentials, error) {
+	c, ok := p.creds[strings.ToUpper(provider)]
+	if !ok || c.ClientID == "" || c.ClientSecret == "" {
+		return Credentials{}, errors.ErrOAuthProviderNotConfigured
 	}
-	_ = clientSecret
+	return c, nil
+}
 
-	state := encodeOAuthState(oauthState{
+func (p *Provider) LoginURL(_ context.Context, provider, tenantID, callbackURL, backendCallbackURL string) (string, error) {
+	provider = strings.ToUpper(provider)
+	c, err := p.credentials(provider)
+	if err != nil {
+		return "", err
+	}
+
+	state := encodeState(oauthState{
 		TenantID:    tenantID,
 		CallbackURL: callbackURL,
 		Provider:    provider,
@@ -51,7 +92,7 @@ func (m *Module) SocialLoginURL(ctx context.Context, provider, tenantID, callbac
 	switch provider {
 	case "GOOGLE":
 		q := url.Values{}
-		q.Set("client_id", clientID)
+		q.Set("client_id", c.ClientID)
 		q.Set("redirect_uri", backendCallbackURL)
 		q.Set("response_type", "code")
 		q.Set("scope", "openid email profile")
@@ -61,7 +102,7 @@ func (m *Module) SocialLoginURL(ctx context.Context, provider, tenantID, callbac
 		return "https://accounts.google.com/o/oauth2/v2/auth?" + q.Encode(), nil
 	case "GITHUB":
 		q := url.Values{}
-		q.Set("client_id", clientID)
+		q.Set("client_id", c.ClientID)
 		q.Set("redirect_uri", backendCallbackURL)
 		q.Set("scope", "read:user user:email")
 		q.Set("state", state)
@@ -69,6 +110,39 @@ func (m *Module) SocialLoginURL(ctx context.Context, provider, tenantID, callbac
 	default:
 		return "", fmt.Errorf("unsupported OAuth provider: %s", provider)
 	}
+}
+
+func (p *Provider) Callback(ctx context.Context, provider, code, state, backendCallbackURL string) (*result.Auth, string, error) {
+	parsed, err := decodeState(state)
+	if err != nil {
+		return nil, "", errors.ErrOAuthStateInvalid
+	}
+
+	provider = strings.ToUpper(provider)
+	c, err := p.credentials(provider)
+	if err != nil {
+		return nil, "", err
+	}
+
+	profile, err := exchangeCode(provider, c.ClientID, c.ClientSecret, code, backendCallbackURL)
+	if err != nil {
+		return nil, "", err
+	}
+
+	userID, err := p.findOrCreateUser(ctx, profile)
+	if err != nil {
+		return nil, "", err
+	}
+
+	sessionToken, err := p.sessions.Create(ctx, userID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return &result.Auth{
+		SessionToken: sessionToken,
+		UserID:       userID,
+	}, parsed.CallbackURL, nil
 }
 
 type socialProfile struct {
@@ -79,51 +153,56 @@ type socialProfile struct {
 	LastName       string
 }
 
-func (m *Module) SocialLoginCallback(ctx context.Context, provider, code, state, backendCallbackURL string) (*LoginResult, string, error) {
-	parsedState, err := decodeOAuthState(state)
-	if err != nil {
-		return nil, "", errors.New("invalid OAuth state")
+func (p *Provider) findOrCreateUser(ctx context.Context, profile socialProfile) (string, error) {
+	if existing, err := p.store.AuthAccounts().GetByProvider(ctx, profile.Provider, profile.ProviderUserID); err == nil {
+		return existing.UserID, nil
 	}
 
-	provider = strings.ToUpper(provider)
-	clientID, clientSecret, err := m.store.GetOAuthProviderCredentials(ctx, parsedState.TenantID, provider)
-	if err != nil || clientID == "" {
-		return nil, "", errors.New("OAuth provider not configured")
+	user, err := p.store.Users().GetByEmail(ctx, profile.Email)
+	if err == nil {
+		_ = p.store.AuthAccounts().Create(ctx, &entities.AuthAccount{
+			ID:         uuid.New().String(),
+			UserID:     user.ID,
+			Provider:   profile.Provider,
+			ProviderID: profile.ProviderUserID,
+		})
+		return user.ID, nil
 	}
 
-	profile, err := exchangeOAuthCode(provider, clientID, clientSecret, code, backendCallbackURL)
-	if err != nil {
-		return nil, "", err
-	}
-
-	userID, err := m.store.FindOrCreateOAuthUser(ctx, parsedState.TenantID, profile.Provider, profile.ProviderUserID, profile.Email, profile.FirstName, profile.LastName)
-	if err != nil {
-		return nil, "", err
-	}
-
-	sessionToken, err := m.createSession(ctx, userID)
-	if err != nil {
-		return nil, "", err
-	}
-
-	return &LoginResult{
-		SessionToken: sessionToken,
-		UserID:       userID,
-	}, parsedState.CallbackURL, nil
+	var userID string
+	err = p.store.Transaction(ctx, func(tx storage.Storage) error {
+		userID = uuid.New().String()
+		if err := tx.Users().Create(ctx, &entities.User{
+			ID:        userID,
+			Email:     profile.Email,
+			FirstName: profile.FirstName,
+			LastName:  profile.LastName,
+			Status:    "ACTIVE",
+		}); err != nil {
+			return err
+		}
+		return tx.AuthAccounts().Create(ctx, &entities.AuthAccount{
+			ID:         uuid.New().String(),
+			UserID:     userID,
+			Provider:   profile.Provider,
+			ProviderID: profile.ProviderUserID,
+		})
+	})
+	return userID, err
 }
 
-func exchangeOAuthCode(provider, clientID, clientSecret, code, redirectURI string) (socialProfile, error) {
+func exchangeCode(provider, clientID, clientSecret, code, redirectURI string) (socialProfile, error) {
 	switch strings.ToUpper(provider) {
 	case "GOOGLE":
-		return exchangeGoogleCode(clientID, clientSecret, code, redirectURI)
+		return exchangeGoogle(clientID, clientSecret, code, redirectURI)
 	case "GITHUB":
-		return exchangeGitHubCode(clientID, clientSecret, code, redirectURI)
+		return exchangeGitHub(clientID, clientSecret, code, redirectURI)
 	default:
 		return socialProfile{}, fmt.Errorf("unsupported provider: %s", provider)
 	}
 }
 
-func exchangeGoogleCode(clientID, clientSecret, code, redirectURI string) (socialProfile, error) {
+func exchangeGoogle(clientID, clientSecret, code, redirectURI string) (socialProfile, error) {
 	form := url.Values{}
 	form.Set("code", code)
 	form.Set("client_id", clientID)
@@ -144,7 +223,7 @@ func exchangeGoogleCode(clientID, clientSecret, code, redirectURI string) (socia
 		return socialProfile{}, err
 	}
 	if tokenResp.AccessToken == "" {
-		return socialProfile{}, errors.New("failed to exchange Google OAuth code")
+		return socialProfile{}, errors.ErrOAuthCodeExchangeFailed
 	}
 
 	req, _ := http.NewRequest(http.MethodGet, "https://www.googleapis.com/oauth2/v3/userinfo", nil)
@@ -165,7 +244,7 @@ func exchangeGoogleCode(clientID, clientSecret, code, redirectURI string) (socia
 		return socialProfile{}, err
 	}
 	if info.Email == "" {
-		return socialProfile{}, errors.New("Google account has no email")
+		return socialProfile{}, errors.ErrOAuthEmailMissing
 	}
 
 	return socialProfile{
@@ -177,7 +256,7 @@ func exchangeGoogleCode(clientID, clientSecret, code, redirectURI string) (socia
 	}, nil
 }
 
-func exchangeGitHubCode(clientID, clientSecret, code, redirectURI string) (socialProfile, error) {
+func exchangeGitHub(clientID, clientSecret, code, redirectURI string) (socialProfile, error) {
 	form := url.Values{}
 	form.Set("code", code)
 	form.Set("client_id", clientID)
@@ -201,7 +280,7 @@ func exchangeGitHubCode(clientID, clientSecret, code, redirectURI string) (socia
 		return socialProfile{}, err
 	}
 	if tokenResp.AccessToken == "" {
-		return socialProfile{}, errors.New("failed to exchange GitHub OAuth code")
+		return socialProfile{}, errors.ErrOAuthCodeExchangeFailed
 	}
 
 	userReq, _ := http.NewRequest(http.MethodGet, "https://api.github.com/user", nil)
@@ -246,7 +325,7 @@ func exchangeGitHubCode(clientID, clientSecret, code, redirectURI string) (socia
 		}
 	}
 	if email == "" {
-		return socialProfile{}, errors.New("GitHub account has no verified email")
+		return socialProfile{}, errors.ErrOAuthEmailMissing
 	}
 
 	first, last := splitName(user.Name)

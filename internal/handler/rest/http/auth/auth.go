@@ -26,14 +26,11 @@ func NewAuthHandler(authModule *auth.Module, me *meModule.Module) *AuthHandler {
 }
 
 func (h *AuthHandler) authSuccessPayloadFromToken(ctx context.Context, userID, sessionToken string) map[string]interface{} {
-	return map[string]interface{}{
-		"session_token": sessionToken,
-		"user_id":       userID,
-	}
+	return h.enrichAuthPayload(ctx, userID, sessionToken)
 }
 
 func (h *AuthHandler) authSuccessPayload(ctx context.Context, userID, sessionToken, sessionOrgID string) map[string]interface{} {
-	return h.authSuccessPayloadFromToken(ctx, userID, sessionToken)
+	return h.enrichAuthPayload(ctx, userID, sessionToken)
 }
 
 func (h *AuthHandler) extractToken(r *http.Request) string {
@@ -120,13 +117,7 @@ func (h *AuthHandler) SetContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.SendSuccessResponse(w, http.StatusOK, "Active resource updated", map[string]interface{}{
-		"session_token":        token,
-		"user_id":              sess.UserID,
-		"active_resource_id":   sess.ActiveResourceID,
-		"organization_id":      sess.ActiveResourceID,
-		"role_id":              sess.RoleID,
-	}, nil)
+	response.SendSuccessResponse(w, http.StatusOK, "Active resource updated", h.enrichAuthPayload(r.Context(), sess.UserID, token), nil)
 }
 
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
@@ -142,16 +133,7 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.SendSuccessResponse(w, http.StatusOK, "Current user", map[string]interface{}{
-		"user": user,
-		"session": map[string]string{
-			"user_id":            sess.UserID,
-			"tenant_id":          sess.TenantID,
-			"active_resource_id": sess.OrgID,
-			"organization_id":    sess.OrgID,
-			"role_id":            sess.RoleID,
-		},
-	}, nil)
+	response.SendSuccessResponse(w, http.StatusOK, "Current user", h.enrichMePayload(r.Context(), sess.UserID, sess.OrgID, user), nil)
 }
 
 func (h *AuthHandler) PasskeysRegister(w http.ResponseWriter, r *http.Request) {

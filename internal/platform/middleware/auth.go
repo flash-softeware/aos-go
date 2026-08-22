@@ -43,11 +43,19 @@ func (m *Auth) RequireSession(next http.Handler) http.Handler {
 			return
 		}
 
+		iamScope := sess.ActiveResourceIAMID
+		if iamScope == "" {
+			if id, scopeErr := m.auth.ResolveAuthorizationScopeIAMID(r.Context(), sess); scopeErr == nil {
+				iamScope = id
+			}
+		}
+
 		ctx := identity.WithSession(r.Context(), identity.Session{
-			UserID:   sess.UserID,
-			TenantID: sess.TenantID,
-			OrgID:    sess.OrgID,
-			RoleID:   sess.RoleID,
+			UserID:              sess.UserID,
+			TenantID:            sess.TenantID,
+			OrgID:               sess.ActiveOrganizationID,
+			ActiveResourceIAMID: iamScope,
+			RoleID:              sess.RoleID,
 		})
 
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -79,7 +87,7 @@ func (m *Auth) OptionalSession(next http.Handler) http.Handler {
 // CanFunc evaluates authorization for middleware.
 type CanFunc func(ctx context.Context, userID, resourceID, permission, tenantID string) (bool, error)
 
-func RequirePermission(can CanFunc, permission string) func(http.Handler) http.Handler {
+func RequirePermission(can CanFunc, permission string, orgsEnabled bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
@@ -89,15 +97,13 @@ func RequirePermission(can CanFunc, permission string) func(http.Handler) http.H
 				return
 			}
 
-			resourceID := r.URL.Query().Get("resourceId")
+			resourceID := identity.ActiveResourceIAMIDFromContext(ctx)
 			if resourceID == "" {
-				resourceID = identity.OrgIDFromContext(ctx)
-			}
-			if resourceID == "" {
-				resourceID = identity.TenantIDFromContext(ctx)
-			}
-			if resourceID == "" {
-				response.SendErrorResponse(w, errors.ErrBadRequest)
+				if orgsEnabled {
+					response.SendErrorResponse(w, errors.ErrNoActiveOrganization)
+				} else {
+					response.SendErrorResponse(w, errors.ErrBadRequest)
+				}
 				return
 			}
 

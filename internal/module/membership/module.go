@@ -2,18 +2,20 @@ package membership
 
 import (
 	"context"
-	"fmt"
 
+	aoserrors "github.com/Esubalew-Sintie/aos-auth-go/internal/constant/errors"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/entities"
 	"github.com/Esubalew-Sintie/aos-auth-go/internal/platform/events"
 	"github.com/Esubalew-Sintie/aos-auth-go/internal/storage"
+	"github.com/google/uuid"
 )
 
 type Module struct {
-	store  storage.Repository
+	store  storage.Storage
 	events *events.Bus
 }
 
-func New(store storage.Repository, bus *events.Bus) *Module {
+func New(store storage.Storage, bus *events.Bus) *Module {
 	return &Module{store: store, events: bus}
 }
 
@@ -25,26 +27,25 @@ type AddInput struct {
 }
 
 func (m *Module) Add(ctx context.Context, in AddInput) (string, error) {
-	tx, err := m.store.BeginTx(ctx)
+	_ = in.TenantID
+
+	ok, err := m.store.Memberships().HasOnResource(ctx, in.UserID, in.ResourceID)
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback(ctx)
+	if ok {
+		return "", aoserrors.ErrMembershipAlreadyOnResource
+	}
 
-	exists, err := m.store.CheckExistingMembership(ctx, in.UserID, in.ResourceID)
+	membershipID := uuid.New().String()
+	err = m.store.Memberships().Create(ctx, &entities.Membership{
+		ID:           membershipID,
+		UserID:       in.UserID,
+		ResourceType: in.ResourceType,
+		ResourceID:   in.ResourceID,
+		Status:       "ACTIVE",
+	})
 	if err != nil {
-		return "", err
-	}
-	if exists {
-		return "", fmt.Errorf("user already has membership on resource")
-	}
-
-	membershipID, err := m.store.InsertMembershipOnResource(ctx, tx, in.TenantID, in.UserID, in.ResourceType, in.ResourceID)
-	if err != nil {
-		return "", err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
 		return "", err
 	}
 
@@ -62,17 +63,7 @@ func (m *Module) Add(ctx context.Context, in AddInput) (string, error) {
 }
 
 func (m *Module) AssignRole(ctx context.Context, membershipID, iamResourceID, roleID string) error {
-	tx, err := m.store.BeginTx(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	if err := m.store.InsertRoleAssignment(ctx, tx, membershipID, iamResourceID, roleID); err != nil {
-		return err
-	}
-
-	return tx.Commit(ctx)
+	return m.store.Memberships().AssignRole(ctx, membershipID, iamResourceID, roleID)
 }
 
 // Assign adds membership and assigns a role on the IAM resource in one transaction.
@@ -96,5 +87,5 @@ func (m *Module) Assign(ctx context.Context, in AddInput, iamResourceID, roleID 
 }
 
 func (m *Module) UserHasAccess(ctx context.Context, userID, resourceID string) (bool, error) {
-	return m.store.UserHasResourceMembership(ctx, userID, resourceID)
+	return m.store.Memberships().HasOnResource(ctx, userID, resourceID)
 }

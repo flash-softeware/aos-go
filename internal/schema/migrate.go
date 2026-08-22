@@ -3,7 +3,6 @@ package schema
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -14,21 +13,7 @@ type Migration struct {
 	Up      string
 }
 
-func RunMigrations(ctx context.Context, db *pgxpool.Pool, tenantType string) error {
-	if _, err := db.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			version INTEGER PRIMARY KEY,
-			name TEXT NOT NULL,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		);
-	`); err != nil {
-		return fmt.Errorf("create schema_migrations: %w", err)
-	}
-
-	if err := baselineExistingSchema(ctx, db); err != nil {
-		return err
-	}
-
+func RunMigrations(ctx context.Context, db *pgxpool.Pool) error {
 	applied, err := loadAppliedVersions(ctx, db)
 	if err != nil {
 		return err
@@ -39,15 +24,7 @@ func RunMigrations(ctx context.Context, db *pgxpool.Pool, tenantType string) err
 			continue
 		}
 
-		sql := adaptSQL(migration.Up, tenantType)
-		if strings.TrimSpace(sql) == "" {
-			if err := recordMigration(ctx, db, migration); err != nil {
-				return err
-			}
-			continue
-		}
-
-		if _, err := db.Exec(ctx, sql); err != nil {
+		if _, err := db.Exec(ctx, migration.Up); err != nil {
 			return fmt.Errorf("migration %03d_%s: %w", migration.Version, migration.Name, err)
 		}
 
@@ -90,6 +67,26 @@ func baselineExistingSchema(ctx context.Context, db *pgxpool.Pool) error {
 }
 
 func loadAppliedVersions(ctx context.Context, db *pgxpool.Pool) (map[int]bool, error) {
+	var migrationsTableExists bool
+	if err := db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.tables
+			WHERE table_schema = 'public' AND table_name = 'schema_migrations'
+		);
+	`).Scan(&migrationsTableExists); err != nil {
+		return nil, fmt.Errorf("detect schema_migrations table: %w", err)
+	}
+	if !migrationsTableExists {
+		if err := baselineExistingSchema(ctx, db); err != nil {
+			return nil, err
+		}
+		return map[int]bool{}, nil
+	}
+
+	if err := baselineExistingSchema(ctx, db); err != nil {
+		return nil, err
+	}
+
 	rows, err := db.Query(ctx, `SELECT version FROM schema_migrations`)
 	if err != nil {
 		return nil, fmt.Errorf("load schema_migrations: %w", err)
@@ -117,17 +114,4 @@ func recordMigration(ctx context.Context, db *pgxpool.Pool, migration Migration)
 		return fmt.Errorf("record migration %03d_%s: %w", migration.Version, migration.Name, err)
 	}
 	return nil
-}
-
-func adaptSQL(sql, tenantType string) string {
-	if tenantType != "single" {
-		return sql
-	}
-
-	out := sql
-	out = strings.ReplaceAll(out, "tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,", "")
-	out = strings.ReplaceAll(out, "tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,", "")
-	out = strings.ReplaceAll(out, "tenant_id UUID NOT NULL REFERENCES tenants (id) ON DELETE CASCADE,", "")
-	out = strings.ReplaceAll(out, "tenant_id UUID REFERENCES tenants (id) ON DELETE CASCADE,", "")
-	return out
 }

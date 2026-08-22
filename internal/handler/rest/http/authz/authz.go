@@ -34,10 +34,10 @@ func (h *Handler) Can(w http.ResponseWriter, r *http.Request) {
 
 	resourceID := req.ResourceID
 	if resourceID == "" {
-		resourceID = sess.OrgID
+		resourceID = identity.ActiveResourceIAMIDFromContext(r.Context())
 	}
 	if resourceID == "" {
-		resourceID = sess.TenantID
+		resourceID = sess.OrgID
 	}
 	if resourceID == "" {
 		response.SendErrorResponse(w, errors.ErrBadRequest)

@@ -17,7 +17,7 @@ func isOrgAdmin(perms []string) bool {
 
 // BuildPortalContext reads org/role/permissions from the session token (sessionOrgID), not from client headers.
 func (m *Module) BuildPortalContext(ctx context.Context, userID, sessionOrgID string) (*response.PortalContext, error) {
-	orgs, err := m.store.GetUserOrganizations(ctx, userID)
+	orgs, err := m.store.Memberships().ListOrganizationsForUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -25,10 +25,7 @@ func (m *Module) BuildPortalContext(ctx context.Context, userID, sessionOrgID st
 		orgs = []response.UserOrganization{}
 	}
 
-	tenantID, _ := m.store.GetUserDefaultTenant(ctx, userID)
-
 	pc := &response.PortalContext{
-		TenantID:      tenantID,
 		Organizations: orgs,
 		Permissions:   []string{},
 	}
@@ -55,7 +52,8 @@ func (m *Module) BuildPortalContext(ctx context.Context, userID, sessionOrgID st
 	pc.OrgID = active.ID
 	pc.RoleID = active.RoleID
 	pc.RoleName = active.RoleName
-	perms, err := m.store.GetUserPermissionCodes(ctx, userID, active.ID)
+	pc.ActiveOrganization = active
+	perms, err := m.store.Authorization().PermissionCodes(ctx, userID, active.ID)
 	if err == nil && perms != nil {
 		pc.Permissions = perms
 	}

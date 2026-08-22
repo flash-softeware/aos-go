@@ -3,20 +3,27 @@ package organization
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"strings"
 	"time"
 
+	aoserrors "github.com/Esubalew-Sintie/aos-auth-go/internal/constant/errors"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/entities"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/module/auth"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/provider/session"
 	"github.com/Esubalew-Sintie/aos-auth-go/internal/storage"
 	"github.com/google/uuid"
 )
 
 type Module struct {
-	store storage.Repository
+	store  storage.Storage
+	orgCfg auth.OrganizationOptions
 }
 
-func New(store storage.Repository) *Module {
-	return &Module{store: store}
+func New(store storage.Storage, orgCfg auth.OrganizationOptions) *Module {
+	return &Module{store: store, orgCfg: orgCfg}
+}
+
+func (m *Module) Enabled() bool {
+	return m.orgCfg.Enabled
 }
 
 type CreateInput struct {
@@ -28,111 +35,144 @@ type InviteResult struct {
 	Email       string `json:"email"`
 }
 
-func (m *Module) Create(ctx context.Context, tenantID, userID string, in CreateInput) (string, error) {
-	tx, err := m.store.BeginTx(ctx)
+func (m *Module) Create(ctx context.Context, userID, sessionToken string, in CreateInput) (string, error) {
+	if !m.orgCfg.Enabled {
+		return "", aoserrors.ErrOrganizationsDisabled
+	}
+	if userID == "" {
+		return "", aoserrors.ErrUserIDRequired
+	}
+	if in.Name == "" {
+		return "", aoserrors.ErrNameRequired
+	}
+
+	orgBusinessID := uuid.New().String()
+	iamID := uuid.New().String()
+
+	var parentID string
+	if inst, err := m.store.Resources().GetByType(ctx, "INSTALLATION"); err == nil && inst != nil {
+		parentID = inst.ID
+	}
+
+	if err := m.store.Resources().Create(ctx, &entities.Resource{
+		ID:           iamID,
+		ResourceType: "ORGANIZATION",
+		ResourceID:   orgBusinessID,
+		ParentID:     parentID,
+		Name:         in.Name,
+	}); err != nil {
+		return "", err
+	}
+
+	membershipID := uuid.New().String()
+	if err := m.store.Memberships().Create(ctx, &entities.Membership{
+		ID:           membershipID,
+		UserID:       userID,
+		ResourceType: "ORGANIZATION",
+		ResourceID:   orgBusinessID,
+		Status:       "ACTIVE",
+	}); err != nil {
+		return "", err
+	}
+
+	ownerRole, err := m.store.Roles().GetSystemByName(ctx, "Owner")
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback(ctx)
-
-	slug := strings.ToLower(strings.ReplaceAll(in.Name, " ", "-"))
-	slug = strings.Trim(slug, "-")
-	if slug == "" {
-		slug = "organization"
-	}
-	slug = slug + "-" + uuid.New().String()[:8]
-
-	orgID, err := m.store.InsertOrganization(ctx, tx, tenantID, in.Name, slug)
-	if err != nil {
+	if err := m.store.Memberships().AssignRole(ctx, membershipID, iamID, ownerRole.ID); err != nil {
 		return "", err
 	}
 
-	if err := m.store.InsertOrgResource(ctx, tx, tenantID, orgID); err != nil {
-		return "", err
+	if sessionToken != "" {
+		_ = m.store.Sessions().SetActiveResource(ctx, session.HashToken(sessionToken), iamID)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return "", err
-	}
-
-	return orgID, nil
+	return orgBusinessID, nil
 }
 
 func (m *Module) Update(ctx context.Context, orgID, name string) error {
-	tx, err := m.store.BeginTx(ctx)
-	if err != nil {
-		return err
+	if !m.orgCfg.Enabled {
+		return aoserrors.ErrOrganizationsDisabled
 	}
-	defer tx.Rollback(ctx)
-
-	if err := m.store.UpdateOrganization(ctx, tx, orgID, name); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	_ = orgID
+	_ = name
+	return aoserrors.ErrOrganizationUpdateNotSupported
 }
 
 func (m *Module) Delete(ctx context.Context, orgID string) error {
-	tx, err := m.store.BeginTx(ctx)
+	if !m.orgCfg.Enabled {
+		return aoserrors.ErrOrganizationsDisabled
+	}
+	resource, err := m.store.Resources().GetByBusinessID(ctx, "ORGANIZATION", orgID)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
-
-	if err := m.store.DeleteOrganization(ctx, tx, orgID); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	return m.store.Resources().Delete(ctx, resource.ID)
 }
 
 func (m *Module) Invite(ctx context.Context, tenantID, orgID, email, roleID string) (*InviteResult, error) {
-	userID, err := m.store.GetUserIDByEmail(ctx, email)
-	if err == nil && userID != "" {
-		isMember, err := m.store.CheckExistingMembership(ctx, userID, orgID)
+	if !m.orgCfg.Enabled {
+		return nil, aoserrors.ErrOrganizationsDisabled
+	}
+	_ = tenantID
+
+	if _, err := m.store.Resources().GetByBusinessID(ctx, "ORGANIZATION", orgID); err != nil {
+		return nil, err
+	}
+
+	var userID string
+	user, err := m.store.Users().GetByEmail(ctx, email)
+	if err == nil && user != nil {
+		userID = user.ID
+		isMember, err := m.store.Memberships().HasOnResource(ctx, userID, orgID)
 		if err != nil {
 			return nil, err
 		}
 		if isMember {
-			return nil, errors.New("409 already member")
+			return nil, aoserrors.ErrAlreadyMember
 		}
 	}
 
-	pending, err := m.store.CheckPendingInvitation(ctx, email, orgID)
-	if err != nil {
-		return nil, err
+	if _, err := m.store.Invitations().GetPending(ctx, email, "ORGANIZATION", orgID); err == nil {
+		return nil, aoserrors.ErrInvitationAlreadyExists
 	}
-	if pending {
-		return nil, errors.New("invitation already exists")
-	}
-
-	tx, err := m.store.BeginTx(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
 
 	if userID == "" {
-		userID, err = m.store.InsertUserWithStatus(ctx, tx, email, "Invited", "User", "PENDING")
-		if err != nil {
+		userID = uuid.New().String()
+		if err := m.store.Users().Create(ctx, &entities.User{
+			ID:        userID,
+			Email:     email,
+			FirstName: "Invited",
+			LastName:  "User",
+			Status:    "PENDING",
+		}); err != nil {
 			return nil, err
 		}
 	}
 
-	if err := m.store.InsertPendingOrganizationMember(ctx, tx, tenantID, orgID, userID, roleID); err != nil {
-		return nil, err
-	}
-
-	if _, err := m.store.InsertInvitation(ctx, tx, tenantID, email, "ORGANIZATION", orgID, roleID); err != nil {
+	invitationID := uuid.New().String()
+	expiresAt := time.Now().Add(7 * 24 * time.Hour)
+	if err := m.store.Invitations().Create(ctx, &entities.Invitation{
+		ID:           invitationID,
+		Email:        email,
+		ResourceType: "ORGANIZATION",
+		ResourceID:   orgID,
+		RoleID:       roleID,
+		Status:       "PENDING",
+		ExpiresAt:    expiresAt.Unix(),
+	}); err != nil {
 		return nil, err
 	}
 
 	inviteToken := uuid.New().String() + uuid.New().String()
-	meta, _ := json.Marshal(map[string]string{"org_id": orgID, "email": email})
-	expiresAt := time.Now().Add(7 * 24 * time.Hour)
-	if err := m.store.InsertUserTokenTx(ctx, tx, userID, "INVITATION", inviteToken, meta, expiresAt); err != nil {
-		return nil, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
+	meta, _ := json.Marshal(map[string]string{
+		"org_id":        orgID,
+		"email":         email,
+		"role_id":       roleID,
+		"invitation_id": invitationID,
+		"resource_type": "ORGANIZATION",
+	})
+	if err := m.store.Tokens().Insert(ctx, userID, "INVITATION", inviteToken, meta, expiresAt); err != nil {
 		return nil, err
 	}
 
@@ -140,27 +180,61 @@ func (m *Module) Invite(ctx context.Context, tenantID, orgID, email, roleID stri
 }
 
 func (m *Module) AddMember(ctx context.Context, orgID, userID, roleID string) error {
-	tx, err := m.store.BeginTx(ctx)
+	if !m.orgCfg.Enabled {
+		return aoserrors.ErrOrganizationsDisabled
+	}
+	resource, err := m.store.Resources().GetByBusinessID(ctx, "ORGANIZATION", orgID)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
 
-	if err := m.store.InsertOrganizationMember(ctx, tx, orgID, userID, roleID); err != nil {
+	membershipID := uuid.New().String()
+	if err := m.store.Memberships().Create(ctx, &entities.Membership{
+		ID:           membershipID,
+		UserID:       userID,
+		ResourceType: "ORGANIZATION",
+		ResourceID:   orgID,
+		Status:       "ACTIVE",
+	}); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+
+	if roleID != "" {
+		return m.store.Memberships().AssignRole(ctx, membershipID, resource.ID, roleID)
+	}
+	return nil
+}
+
+func (m *Module) Activate(ctx context.Context, userID, sessionToken, orgBusinessID string) error {
+	if !m.orgCfg.Enabled {
+		return aoserrors.ErrOrganizationsDisabled
+	}
+	if userID == "" || orgBusinessID == "" {
+		return aoserrors.ErrUserAndOrgIDRequired
+	}
+
+	ok, err := m.store.Memberships().HasOnResource(ctx, userID, orgBusinessID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return aoserrors.ErrNotMemberOfOrganization
+	}
+
+	res, err := m.store.Resources().GetByBusinessID(ctx, "ORGANIZATION", orgBusinessID)
+	if err != nil {
+		return err
+	}
+	return m.store.Sessions().SetActiveResource(ctx, session.HashToken(sessionToken), res.ID)
 }
 
 func (m *Module) RemoveMember(ctx context.Context, orgID, userID string) error {
-	tx, err := m.store.BeginTx(ctx)
+	if !m.orgCfg.Enabled {
+		return aoserrors.ErrOrganizationsDisabled
+	}
+	membership, err := m.store.Memberships().Get(ctx, userID, "ORGANIZATION", orgID)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
-
-	if err := m.store.DeleteOrganizationMember(ctx, tx, orgID, userID); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	return m.store.Memberships().Remove(ctx, membership.ID)
 }

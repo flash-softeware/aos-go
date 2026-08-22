@@ -27,11 +27,15 @@ func (h *ManagementHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		response.SendErrorResponse(w, errors.ErrBadRequest)
 		return
 	}
-	if req.TenantID == "" {
-		req.TenantID = identity.TenantIDFromContext(r.Context())
+	orgID := req.OrganizationID
+	if orgID == "" {
+		orgID = req.OrganizationIDSnake
+	}
+	if orgID == "" && h.managementModule.RolesOrganizationsEnabled() {
+		orgID = identity.OrgIDFromContext(r.Context())
 	}
 
-	roleID, err := h.managementModule.CreateRole(r.Context(), req.TenantID, req.Name, req.Description)
+	roleID, err := h.managementModule.CreateRole(r.Context(), req.Name, req.Description, orgID, req.IsSystem)
 	if err != nil {
 		response.SendErrorResponse(w, err)
 		return

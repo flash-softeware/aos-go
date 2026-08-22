@@ -3,14 +3,16 @@ package resources
 import (
 	"context"
 
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/entities"
 	"github.com/Esubalew-Sintie/aos-auth-go/internal/storage"
+	"github.com/google/uuid"
 )
 
 type Module struct {
-	store storage.Repository
+	store storage.Storage
 }
 
-func New(store storage.Repository) *Module {
+func New(store storage.Storage) *Module {
 	return &Module{store: store}
 }
 
@@ -24,33 +26,41 @@ type CreateInput struct {
 }
 
 func (m *Module) Create(ctx context.Context, in CreateInput) (string, error) {
-	tx, err := m.store.BeginTx(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback(ctx)
+	_ = in.TenantID
 
 	parentIAMID := ""
 	if in.ParentResource != "" && in.ParentType != "" {
-		parentIAMID, err = m.store.GetIAMResource(ctx, tx, in.ParentResource, in.ParentType)
+		parent, err := m.store.Resources().GetByBusinessID(ctx, in.ParentType, in.ParentResource)
 		if err != nil {
 			return "", err
 		}
+		parentIAMID = parent.ID
 	}
 
-	iamID, err := m.store.InsertIAMResource(ctx, tx, in.TenantID, in.Type, in.ResourceID, parentIAMID, in.Name)
+	businessID := in.ResourceID
+	if businessID == "" {
+		businessID = uuid.New().String()
+	}
+
+	iamID := uuid.New().String()
+	err := m.store.Resources().Create(ctx, &entities.Resource{
+		ID:           iamID,
+		ResourceType: in.Type,
+		ResourceID:   businessID,
+		ParentID:     parentIAMID,
+		Name:         in.Name,
+	})
 	if err != nil {
 		return "", err
 	}
 
-	return iamID, tx.Commit(ctx)
+	return iamID, nil
 }
 
 func (m *Module) IAMResourceID(ctx context.Context, resourceID, resourceType string) (string, error) {
-	tx, err := m.store.BeginTx(ctx)
+	resource, err := m.store.Resources().GetByBusinessID(ctx, resourceType, resourceID)
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback(ctx)
-	return m.store.GetIAMResource(ctx, tx, resourceID, resourceType)
+	return resource.ID, nil
 }

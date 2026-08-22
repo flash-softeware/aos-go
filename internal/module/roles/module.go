@@ -2,84 +2,132 @@ package roles
 
 import (
 	"context"
-	"fmt"
 
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/errors"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/entities"
 	"github.com/Esubalew-Sintie/aos-auth-go/internal/storage"
+	"github.com/google/uuid"
 )
 
 type Module struct {
-	store storage.Repository
+	store       storage.Storage
+	orgsEnabled bool
 }
 
-func New(store storage.Repository) *Module {
-	return &Module{store: store}
+func New(store storage.Storage, orgsEnabled bool) *Module {
+	return &Module{store: store, orgsEnabled: orgsEnabled}
 }
 
-func (m *Module) Create(ctx context.Context, tenantID, name, description string, isSystem bool) (string, error) {
-	tx, err := m.store.BeginTx(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback(ctx)
+func (m *Module) OrganizationsEnabled() bool {
+	return m.orgsEnabled
+}
 
-	roleID, err := m.store.InsertSystemRole(ctx, tx, tenantID, name, description, isSystem)
-	if err != nil {
+type CreateInput struct {
+	Name                   string
+	Description            string
+	IsSystem               bool
+	OrganizationBusinessID string // business org UUID; required when orgs enabled
+}
+
+func (m *Module) validateCreateScope(in CreateInput) error {
+	if m.orgsEnabled {
+		if in.OrganizationBusinessID == "" {
+			return errors.ErrOrganizationIDRequired
+		}
+		if in.IsSystem {
+			return errors.ErrSystemRoleCreateForbidden
+		}
+		return nil
+	}
+	if in.OrganizationBusinessID != "" {
+		return errors.ErrOrganizationScopeNotAllowed
+	}
+	return nil
+}
+
+func (m *Module) Create(ctx context.Context, in CreateInput) (string, error) {
+	if in.Name == "" {
+		return "", errors.ErrRoleNameRequired
+	}
+	if err := m.validateCreateScope(in); err != nil {
 		return "", err
 	}
-	return roleID, tx.Commit(ctx)
+
+	role := &entities.Role{
+		ID:          uuid.New().String(),
+		Name:        in.Name,
+		Description: in.Description,
+		IsSystem:    in.IsSystem,
+	}
+
+	if in.OrganizationBusinessID != "" {
+		org, err := m.store.Resources().GetByBusinessID(ctx, "ORGANIZATION", in.OrganizationBusinessID)
+		if err != nil {
+			return "", err
+		}
+		role.OrganizationID = org.ID
+		if _, err := m.store.Roles().GetByNameForOrg(ctx, org.ID, in.Name); err == nil {
+			return "", errors.ErrRoleAlreadyExistsForOrganization
+		}
+	} else if _, err := m.store.Roles().GetSystemByName(ctx, in.Name); err == nil {
+		return "", errors.ErrSystemRoleAlreadyExists
+	}
+
+	if err := m.store.Roles().Create(ctx, role); err != nil {
+		return "", err
+	}
+	return role.ID, nil
+}
+
+// CreateLegacy preserves the tenant-scoped signature used by older callers.
+func (m *Module) CreateLegacy(ctx context.Context, tenantID, name, description string, isSystem bool) (string, error) {
+	_ = tenantID
+	return m.Create(ctx, CreateInput{
+		Name:        name,
+		Description: description,
+		IsSystem:    isSystem,
+	})
 }
 
 func (m *Module) Grant(ctx context.Context, roleID, permissionCode string) error {
-	permID, err := m.store.GetPermissionIDByCode(ctx, permissionCode)
-	if err != nil || permID == "" {
-		return fmt.Errorf("permission not found: %s", permissionCode)
-	}
-
-	tx, err := m.store.BeginTx(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	if err := m.store.InsertRolePerm(ctx, tx, roleID, permID); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	_, err := m.store.Roles().GrantPermission(ctx, roleID, permissionCode)
+	return err
 }
 
 func (m *Module) GrantByID(ctx context.Context, roleID, permissionID string) error {
-	tx, err := m.store.BeginTx(ctx)
+	perm, err := m.store.Permissions().GetByCode(ctx, permissionID)
 	if err != nil {
-		return err
+		return errors.ErrPermissionNotFound
 	}
-	defer tx.Rollback(ctx)
-
-	if err := m.store.InsertRolePerm(ctx, tx, roleID, permissionID); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	_, err = m.store.Roles().GrantPermission(ctx, roleID, perm.Code)
+	return err
 }
 
-func (m *Module) RegisterAndGrant(ctx context.Context, tenantID, roleName, roleDesc, permissionCode, permResourceType, permAction, permDesc string) (roleID string, err error) {
-	tx, err := m.store.BeginTx(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback(ctx)
+func (m *Module) RegisterAndGrant(ctx context.Context, tenantID, roleName, roleDesc, permissionCode, permResourceType, permAction, permDesc, organizationBusinessID string) (roleID string, err error) {
+	_ = tenantID
 
-	roleID, err = m.store.InsertSystemRole(ctx, tx, tenantID, roleName, roleDesc, false)
-	if err != nil {
-		return "", err
-	}
-
-	permID, err := m.store.InsertPermission(ctx, tx, permResourceType, permAction, permissionCode, permDesc)
+	roleID, err = m.Create(ctx, CreateInput{
+		Name:                   roleName,
+		Description:            roleDesc,
+		OrganizationBusinessID: organizationBusinessID,
+	})
 	if err != nil {
 		return "", err
 	}
 
-	if err := m.store.InsertRolePerm(ctx, tx, roleID, permID); err != nil {
-		return "", err
-	}
-
-	return roleID, tx.Commit(ctx)
+	permID := uuid.New().String()
+	err = m.store.Transaction(ctx, func(tx storage.Storage) error {
+		if err := tx.Permissions().Create(ctx, &entities.Permission{
+			ID:           permID,
+			Code:         permissionCode,
+			Description:  permDesc,
+			ResourceType: permResourceType,
+			Action:       permAction,
+		}); err != nil {
+			return err
+		}
+		_, err := tx.Roles().GrantPermission(ctx, roleID, permissionCode)
+		return err
+	})
+	return roleID, err
 }

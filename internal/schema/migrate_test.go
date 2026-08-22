@@ -31,7 +31,7 @@ func TestRunMigrationsFreshDatabase(t *testing.T) {
 		t.Fatalf("reset schema: %v", err)
 	}
 
-	if err := schema.RunMigrations(ctx, pool, "multi"); err != nil {
+	if err := schema.RunMigrations(ctx, pool); err != nil {
 		t.Fatalf("first migrate: %v", err)
 	}
 
@@ -43,20 +43,37 @@ func TestRunMigrationsFreshDatabase(t *testing.T) {
 		t.Fatalf("applied migrations = %d, want %d", count, len(schema.Migrations))
 	}
 
-	var usersExists bool
-	if err := pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM information_schema.tables
-			WHERE table_schema = 'public' AND table_name = 'users'
-		);
-	`).Scan(&usersExists); err != nil {
-		t.Fatalf("check users table: %v", err)
-	}
-	if !usersExists {
-		t.Fatal("users table missing after migrate")
+	for _, table := range []string{"users", "iam_resources", "oauth_providers", "audit_logs"} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM information_schema.tables
+				WHERE table_schema = 'public' AND table_name = $1
+			);
+		`, table).Scan(&exists); err != nil {
+			t.Fatalf("check %s table: %v", table, err)
+		}
+		if !exists {
+			t.Fatalf("%s table missing after migrate", table)
+		}
 	}
 
-	if err := schema.RunMigrations(ctx, pool, "multi"); err != nil {
+	for _, table := range []string{"tenants", "organizations", "projects"} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM information_schema.tables
+				WHERE table_schema = 'public' AND table_name = $1
+			);
+		`, table).Scan(&exists); err != nil {
+			t.Fatalf("check legacy %s table: %v", table, err)
+		}
+		if exists {
+			t.Fatalf("legacy table %s must not exist in canonical schema", table)
+		}
+	}
+
+	if err := schema.RunMigrations(ctx, pool); err != nil {
 		t.Fatalf("second migrate: %v", err)
 	}
 }

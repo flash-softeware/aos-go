@@ -69,6 +69,7 @@ func (router *Router) ServeHTTP(requireAuth, requireAdmin func(http.Handler) htt
 		r.Use(requireAuth)
 		r.Post("/v1/auth/logout", router.AuthHandler.Logout)
 		r.Post("/v1/auth/set-context", router.AuthHandler.SetContext)
+		r.Post("/v1/organizations/{id}/activate", router.OrganizationHandler.Activate)
 		r.Post("/v1/auth/switch-organization", router.AuthHandler.SwitchOrganization)
 		r.Get("/v1/auth/me", router.AuthHandler.Me)
 		r.Post("/v1/auth/verify/email/resend", router.AuthHandler.ResendEmailVerification)

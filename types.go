@@ -2,10 +2,11 @@ package aos
 
 // Session represents validated identity for a request or programmatic call.
 type Session struct {
-	UserID            string
-	TenantID          string
-	ActiveResourceID  string
-	RoleID            string
+	UserID              string
+	TenantID            string
+	ActiveResourceID    string // business organization UUID when orgs are enabled
+	ActiveResourceIAMID string // iam_resources.id — authorization scope
+	RoleID              string
 	// OrgID is deprecated; use ActiveResourceID.
 	OrgID string
 }
@@ -55,9 +56,10 @@ type GenerateResourceResult struct {
 }
 
 type CreateOrgInput struct {
-	TenantID string
-	UserID   string
-	Name     string
+	TenantID     string // deprecated; ignored for embedded installs
+	UserID       string
+	SessionToken string
+	Name         string
 }
 
 type RegisterInput struct {
@@ -93,10 +95,12 @@ type AddMembershipInput struct {
 }
 
 type CreateRoleInput struct {
-	TenantID    string
-	Name        string
-	Description string
-	IsSystem    bool
+	Name           string
+	Description    string
+	IsSystem       bool
+	OrganizationID string // business org UUID; empty creates a system/global role
+	// TenantID is deprecated and ignored.
+	TenantID string
 }
 
 type RegisterPermissionInput struct {

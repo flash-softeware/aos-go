@@ -54,16 +54,17 @@ type OrgMember struct {
 	RoleName  string `json:"role_name,omitempty" db:"role_name"`
 }
 
-// PortalContext is returned at login and /v1/auth/me for merchant portal clients.
+// PortalContext is returned at login and /v1/auth/me when organizations are enabled.
 type PortalContext struct {
-	TenantID      string             `json:"tenant_id"`
-	OrgID         string             `json:"org_id,omitempty"`
-	RoleID        string             `json:"role_id,omitempty"`
-	RoleName      string             `json:"role_name,omitempty"`
-	Permissions   []string           `json:"permissions"`
-	IsOrgAdmin    bool               `json:"is_org_admin"`
-	NeedsOrgSelection bool           `json:"needs_org_selection"`
-	Organizations []UserOrganization `json:"organizations"`
+	TenantID            string             `json:"tenant_id,omitempty"`
+	OrgID               string             `json:"org_id,omitempty"`
+	RoleID              string             `json:"role_id,omitempty"`
+	RoleName            string             `json:"role_name,omitempty"`
+	Permissions         []string           `json:"permissions"`
+	IsOrgAdmin          bool               `json:"is_org_admin"`
+	NeedsOrgSelection   bool               `json:"needs_org_selection"`
+	Organizations       []UserOrganization `json:"organizations"`
+	ActiveOrganization  *UserOrganization  `json:"active_organization,omitempty"`
 }
 
 type Tenant struct {

@@ -3,21 +3,36 @@ package organization
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	dto "github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/request"
 	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/response"
 	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/errors"
+	authModule "github.com/Esubalew-Sintie/aos-auth-go/internal/module/auth"
 	"github.com/Esubalew-Sintie/aos-auth-go/internal/module/organization"
 	"github.com/Esubalew-Sintie/aos-auth-go/internal/platform/identity"
 	"github.com/go-chi/chi/v5"
 )
 
 type OrganizationHandler struct {
-	orgModule *organization.Module
+	orgModule  *organization.Module
+	authModule *authModule.Module
 }
 
-func NewOrganizationHandler(orgModule *organization.Module) *OrganizationHandler {
-	return &OrganizationHandler{orgModule: orgModule}
+func NewOrganizationHandler(orgModule *organization.Module, authMod *authModule.Module) *OrganizationHandler {
+	return &OrganizationHandler{orgModule: orgModule, authModule: authMod}
+}
+
+func (h *OrganizationHandler) extractToken(r *http.Request) string {
+	if header := r.Header.Get("Authorization"); header != "" {
+		if len(header) > 7 && strings.EqualFold(header[:7], "Bearer ") {
+			return header[7:]
+		}
+	}
+	if cookie, err := r.Cookie("aos_session"); err == nil {
+		return cookie.Value
+	}
+	return ""
 }
 
 func (h *OrganizationHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -33,22 +48,29 @@ func (h *OrganizationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess := identity.SessionFromRequest(r)
-	tenantID := req.TenantID
-	if tenantID == "" {
-		tenantID = sess.TenantID
-	}
-	if tenantID == "" {
-		response.SendErrorResponse(w, errors.ErrBadRequest)
-		return
-	}
-
 	userID := req.UserID
 	if userID == "" {
 		userID = sess.UserID
 	}
+	if userID == "" {
+		response.SendErrorResponse(w, errors.ErrUnauthorized)
+		return
+	}
+
+	token := h.extractToken(r)
+	if token == "" {
+		if c, err := r.Cookie("aos_session"); err == nil {
+			token = c.Value
+		}
+	}
+	if token == "" {
+		if header := r.Header.Get("Authorization"); len(header) > 7 && header[:7] == "Bearer " {
+			token = header[7:]
+		}
+	}
 
 	in := organization.CreateInput{Name: req.Name}
-	orgID, err := h.orgModule.Create(r.Context(), tenantID, userID, in)
+	orgID, err := h.orgModule.Create(r.Context(), userID, token, in)
 	if err != nil {
 		response.SendErrorResponse(w, err)
 		return
@@ -124,6 +146,43 @@ func (h *OrganizationHandler) AddMember(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	response.SendSuccessResponse(w, http.StatusOK, "Member added", nil, nil)
+}
+
+func (h *OrganizationHandler) Activate(w http.ResponseWriter, r *http.Request) {
+	orgID := chi.URLParam(r, "id")
+	if orgID == "" {
+		response.SendErrorResponse(w, errors.ErrBadRequest)
+		return
+	}
+
+	token := h.extractToken(r)
+	if token == "" {
+		response.SendErrorResponse(w, errors.ErrUnauthorized)
+		return
+	}
+
+	sess := identity.SessionFromRequest(r)
+	if sess.UserID == "" {
+		response.SendErrorResponse(w, errors.ErrUnauthorized)
+		return
+	}
+
+	if err := h.orgModule.Activate(r.Context(), sess.UserID, token, orgID); err != nil {
+		response.SendErrorResponse(w, errors.ErrForbidden)
+		return
+	}
+
+	authSess, err := h.authModule.ValidateSessionFull(r.Context(), token)
+	if err != nil {
+		response.SendErrorResponse(w, err)
+		return
+	}
+
+	response.SendSuccessResponse(w, http.StatusOK, "Organization activated", map[string]interface{}{
+		"organization_id":      orgID,
+		"active_resource_id":   authSess.ActiveOrganizationID,
+		"user_id":              authSess.UserID,
+	}, nil)
 }
 
 func (h *OrganizationHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {

@@ -2,8 +2,8 @@ package aos
 
 import (
 	"context"
-	"errors"
 
+	aoserrors "github.com/Esubalew-Sintie/aos-auth-go/internal/constant/errors"
 	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/response"
 )
 
@@ -20,9 +20,9 @@ func (a *AOS) Context() *ContextAPI { return &ContextAPI{a: a} }
 
 func (c *ContextAPI) ListOrganizations(ctx context.Context, userID string) ([]UserOrganization, error) {
 	if userID == "" {
-		return nil, errors.New("userID is required")
+		return nil, aoserrors.ErrUserIDRequired
 	}
-	orgs, err := c.a.App.Store.GetUserOrganizations(ctx, userID)
+	orgs, err := c.a.app.Store.Memberships().ListOrganizationsForUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -34,28 +34,28 @@ func (c *ContextAPI) ListOrganizations(ctx context.Context, userID string) ([]Us
 
 func (c *ContextAPI) ListPermissions(ctx context.Context, userID, resourceID string) ([]string, error) {
 	if userID == "" || resourceID == "" {
-		return nil, errors.New("userID and resourceID are required")
+		return nil, aoserrors.ErrUserAndResourceIDRequired
 	}
-	ok, err := c.a.App.Store.UserHasOrgMembership(ctx, userID, resourceID)
+	ok, err := c.a.app.Store.Memberships().HasOnResource(ctx, userID, resourceID)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, errors.New("not a member of this resource")
+		return nil, aoserrors.ErrNotMemberOfResource
 	}
-	return c.a.App.Store.GetUserPermissionCodes(ctx, userID, resourceID)
+	return c.a.app.Store.Authorization().PermissionCodes(ctx, userID, resourceID)
 }
 
 func (c *ContextAPI) ListOrgMembers(ctx context.Context, userID, orgID, tenantID string) ([]OrgMember, error) {
 	if userID == "" || orgID == "" {
-		return nil, errors.New("userID and orgID are required")
+		return nil, aoserrors.ErrUserAndOrgIDRequired
 	}
-	ok, err := c.a.App.Store.UserHasOrgMembership(ctx, userID, orgID)
+	ok, err := c.a.app.Store.Memberships().HasOnResource(ctx, userID, orgID)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, errors.New("not a member of this organization")
+		return nil, aoserrors.ErrNotMemberOfOrganization
 	}
 
 	allowed, err := c.a.Authz().Can(ctx, AuthzInput{
@@ -68,16 +68,8 @@ func (c *ContextAPI) ListOrgMembers(ctx context.Context, userID, orgID, tenantID
 		return nil, err
 	}
 	if !allowed {
-		allowed, err = c.a.Authz().Can(ctx, AuthzInput{
-			UserID:     userID,
-			ResourceID: orgID,
-			Permission: "merchant.read",
-			TenantID:   tenantID,
-		})
-		if err != nil || !allowed {
-			return nil, errors.New("forbidden")
-		}
+		return nil, aoserrors.ErrForbidden
 	}
 
-	return c.a.App.Store.GetOrgMembers(ctx, orgID)
+	return c.a.app.Store.Memberships().ListMembers(ctx, "ORGANIZATION", orgID)
 }

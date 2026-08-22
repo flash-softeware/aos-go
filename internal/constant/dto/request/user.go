@@ -20,9 +20,12 @@ type CreateOrgRequest struct {
 }
 
 type CreateRoleRequest struct {
-	TenantID    string `json:"tenantId"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	TenantID       string `json:"tenantId"`
+	OrganizationID string `json:"organizationId"`
+	OrganizationIDSnake string `json:"organization_id"`
+	Name           string `json:"name"`
+	Description    string `json:"description"`
+	IsSystem       bool   `json:"isSystem"`
 }
 
 type IAMCanRequest struct {

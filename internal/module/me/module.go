@@ -2,43 +2,44 @@ package me
 
 import (
 	"context"
-	"errors"
 
+	aoserrors "github.com/Esubalew-Sintie/aos-auth-go/internal/constant/errors"
 	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/response"
 	"github.com/Esubalew-Sintie/aos-auth-go/internal/module/iam"
 	"github.com/Esubalew-Sintie/aos-auth-go/internal/storage"
 )
 
 type Module struct {
-	store storage.Repository
+	store storage.Storage
 	iam   *iam.Engine
 }
 
-func New(store storage.Repository, iamEngine *iam.Engine) *Module {
+func New(store storage.Storage, iamEngine *iam.Engine) *Module {
 	return &Module{store: store, iam: iamEngine}
 }
 
 func (m *Module) ListOrganizations(ctx context.Context, userID string) ([]response.UserOrganization, error) {
-	return m.store.GetUserOrganizations(ctx, userID)
+	return m.store.Memberships().ListOrganizationsForUser(ctx, userID)
 }
 
 func (m *Module) ListPermissions(ctx context.Context, userID, orgID, tenantID string) ([]string, error) {
-	ok, err := m.store.UserHasOrgMembership(ctx, userID, orgID)
+	_ = tenantID
+	ok, err := m.store.Memberships().HasOnResource(ctx, userID, orgID)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, errors.New("not a member of this organization")
+		return nil, aoserrors.ErrNotMemberOfOrganization
 	}
-	return m.store.GetUserPermissionCodes(ctx, userID, orgID)
+	return m.store.Authorization().PermissionCodes(ctx, userID, orgID)
 }
 
 func (m *Module) Can(ctx context.Context, userID, resourceID, permission, tenantID string) (bool, error) {
 	if resourceID == "" {
-		return false, errors.New("resourceId is required")
+		return false, aoserrors.ErrResourceIDRequired
 	}
 	if permission == "" {
-		return false, errors.New("permission is required")
+		return false, aoserrors.ErrPermissionRequired
 	}
 	return m.iam.Can(ctx, iam.CanParams{
 		UserID:     userID,
@@ -49,12 +50,12 @@ func (m *Module) Can(ctx context.Context, userID, resourceID, permission, tenant
 }
 
 func (m *Module) ListOrgMembers(ctx context.Context, userID, orgID, tenantID string) ([]response.OrgMember, error) {
-	ok, err := m.store.UserHasOrgMembership(ctx, userID, orgID)
+	ok, err := m.store.Memberships().HasOnResource(ctx, userID, orgID)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, errors.New("not a member of this organization")
+		return nil, aoserrors.ErrNotMemberOfOrganization
 	}
 
 	allowed, err := m.iam.Can(ctx, iam.CanParams{
@@ -74,15 +75,15 @@ func (m *Module) ListOrgMembers(ctx context.Context, userID, orgID, tenantID str
 			TenantID:   tenantID,
 		})
 		if err != nil || !allowed {
-			return nil, errors.New("forbidden")
+			return nil, aoserrors.ErrForbidden
 		}
 	}
 
-	return m.store.GetOrgMembers(ctx, orgID)
+	return m.store.Memberships().ListMembers(ctx, "ORGANIZATION", orgID)
 }
 
 func (m *Module) GetOrganization(ctx context.Context, userID, orgID string) (*response.UserOrganization, error) {
-	orgs, err := m.store.GetUserOrganizations(ctx, userID)
+	orgs, err := m.store.Memberships().ListOrganizationsForUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -91,5 +92,5 @@ func (m *Module) GetOrganization(ctx context.Context, userID, orgID string) (*re
 			return &o, nil
 		}
 	}
-	return nil, errors.New("organization not found")
+	return nil, aoserrors.ErrOrganizationNotFound
 }

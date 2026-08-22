@@ -2,9 +2,10 @@ package auth
 
 import (
 	"context"
-	"errors"
 	"time"
 
+	aoserrors "github.com/Esubalew-Sintie/aos-auth-go/internal/constant/errors"
+	"github.com/Esubalew-Sintie/aos-auth-go/internal/platform/crypto"
 	"github.com/Esubalew-Sintie/aos-auth-go/internal/platform/totp"
 	"github.com/google/uuid"
 )
@@ -15,7 +16,7 @@ type MfaStatus struct {
 }
 
 func (m *Module) GetMfaStatus(ctx context.Context, userID string) (*MfaStatus, error) {
-	enabled, verified, err := m.store.GetMfaStatus(ctx, userID)
+	enabled, verified, err := m.store.Mfa().Status(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -23,26 +24,46 @@ func (m *Module) GetMfaStatus(ctx context.Context, userID string) (*MfaStatus, e
 }
 
 func (m *Module) MfaEnrollStart(ctx context.Context, userID, email string) (map[string]string, error) {
-	secret := totp.GenerateSecret(20)
-	if err := m.store.UpsertMfaSecret(ctx, userID, secret); err != nil {
+	if err := m.requireMfaBox(); err != nil {
+		return nil, err
+	}
+	secret, err := totp.GenerateSecret(20)
+	if err != nil {
+		return nil, err
+	}
+	encrypted, err := m.mfaBox.Encrypt(secret)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.store.Mfa().UpsertSecret(ctx, userID, encrypted); err != nil {
 		return nil, err
 	}
 	return map[string]string{
 		"secret":  secret,
-		"otpauth": totp.KeyURI(email, "AOS IDaaS", secret),
+		"otpauth": totp.KeyURI(email, m.mfaOpts.Issuer, secret),
 	}, nil
 }
 
 func (m *Module) MfaEnrollVerify(ctx context.Context, userID, code string) (map[string]interface{}, error) {
-	secret, err := m.store.GetMfaSecret(ctx, userID)
+	if err := m.requireMfaBox(); err != nil {
+		return nil, err
+	}
+	secret, err := m.getDecryptedSecret(ctx, userID)
 	if err != nil || secret == "" {
-		return nil, errors.New("MFA enrollment not started")
+		return nil, aoserrors.ErrMfaEnrollmentNotStarted
 	}
 	if !totp.VerifyTOTP(secret, code, 1) {
-		return nil, errors.New("Invalid verification code")
+		return nil, aoserrors.ErrMfaInvalidVerificationCode
 	}
-	recoveryCodes := totp.RandomRecoveryCodes(8)
-	if err := m.store.EnableMfa(ctx, userID, recoveryCodes); err != nil {
+	recoveryCodes, err := totp.RandomRecoveryCodes(m.mfaOpts.RecoveryCodeCount)
+	if err != nil {
+		return nil, err
+	}
+	hashedCodes, err := crypto.HashRecoveryCodes(recoveryCodes)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.store.Mfa().Enable(ctx, userID, hashedCodes); err != nil {
 		return nil, err
 	}
 	return map[string]interface{}{
@@ -52,65 +73,57 @@ func (m *Module) MfaEnrollVerify(ctx context.Context, userID, code string) (map[
 }
 
 func (m *Module) MfaDisable(ctx context.Context, userID, code string) error {
-	secret, recoveryCodes, err := m.store.GetMfaWithRecovery(ctx, userID)
+	if err := m.requireMfaBox(); err != nil {
+		return err
+	}
+	secret, storedHashes, err := m.getDecryptedSecretWithRecovery(ctx, userID)
 	if err != nil || secret == "" {
-		return errors.New("MFA is not enabled")
+		return aoserrors.ErrMfaNotEnabled
 	}
 
 	validTotp := totp.VerifyTOTP(secret, code, 1)
-	upper := stringsToUpper(code)
-	validRecovery := false
-	for _, rc := range recoveryCodes {
-		if rc == upper {
-			validRecovery = true
-			recoveryCodes = removeCode(recoveryCodes, rc)
-			break
-		}
-	}
+	remaining, validRecovery := verifyAndConsumeRecovery(code, storedHashes)
 	if !validTotp && !validRecovery {
-		return errors.New("Invalid code")
+		return aoserrors.ErrMfaInvalidCode
 	}
 	if validRecovery {
-		if err := m.store.UpdateMfaRecoveryCodes(ctx, userID, recoveryCodes); err != nil {
+		if err := m.store.Mfa().UpdateRecoveryCodes(ctx, userID, remaining); err != nil {
 			return err
 		}
 	}
-	return m.store.DisableMfa(ctx, userID)
+	return m.store.Mfa().Disable(ctx, userID)
 }
 
 func (m *Module) MfaVerifyLogin(ctx context.Context, mfaToken, code string) (map[string]string, error) {
+	if err := m.requireMfaBox(); err != nil {
+		return nil, err
+	}
 	tokenHash := hashToken(mfaToken)
-	userID, err := m.store.ConsumeMfaChallenge(ctx, tokenHash)
+	userID, err := m.store.Mfa().ConsumeChallenge(ctx, tokenHash)
 	if err != nil || userID == "" {
-		return nil, errors.New("Invalid or expired MFA challenge")
+		return nil, aoserrors.ErrMfaChallengeInvalid
 	}
 
-	secret, recoveryCodes, err := m.store.GetMfaWithRecovery(ctx, userID)
+	secret, storedHashes, err := m.getDecryptedSecretWithRecovery(ctx, userID)
 	if err != nil || secret == "" {
-		return nil, errors.New("MFA not configured")
+		return nil, aoserrors.ErrMfaNotConfigured
 	}
 
 	validTotp := totp.VerifyTOTP(secret, code, 1)
-	upper := stringsToUpper(code)
-	validRecovery := false
-	for _, rc := range recoveryCodes {
-		if rc == upper {
-			validRecovery = true
-			recoveryCodes = removeCode(recoveryCodes, rc)
-			break
-		}
-	}
+	remaining, validRecovery := verifyAndConsumeRecovery(code, storedHashes)
 	if !validTotp && !validRecovery {
-		return nil, errors.New("Invalid MFA code")
+		return nil, aoserrors.ErrMfaInvalidCode
 	}
 	if validRecovery {
-		_ = m.store.UpdateMfaRecoveryCodes(ctx, userID, recoveryCodes)
+		_ = m.store.Mfa().UpdateRecoveryCodes(ctx, userID, remaining)
 	}
 
 	sessionToken, err := m.createSession(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
+	_ = m.autoSetActiveOrganization(ctx, sessionToken, userID)
+
 	return map[string]string{
 		"session_token": sessionToken,
 		"user_id":       userID,
@@ -121,28 +134,57 @@ func (m *Module) CreateMfaLoginChallenge(ctx context.Context, userID string) (st
 	token := uuid.New().String() + uuid.New().String()
 	tokenHash := hashToken(token)
 	expiresAt := time.Now().Add(5 * time.Minute)
-	if err := m.store.InsertMfaChallenge(ctx, userID, tokenHash, expiresAt); err != nil {
+	if err := m.store.Mfa().InsertChallenge(ctx, userID, tokenHash, expiresAt); err != nil {
 		return "", err
 	}
 	return token, nil
 }
 
-func stringsToUpper(s string) string {
-	b := []byte(s)
-	for i := range b {
-		if b[i] >= 'a' && b[i] <= 'z' {
-			b[i] -= 32
-		}
+func (m *Module) requireMfaBox() error {
+	if m.mfaBox == nil {
+		return aoserrors.ErrMfaNotConfigured
 	}
-	return string(b)
+	return nil
 }
 
-func removeCode(codes []string, target string) []string {
-	out := make([]string, 0, len(codes))
-	for _, c := range codes {
-		if c != target {
-			out = append(out, c)
+func (m *Module) getDecryptedSecret(ctx context.Context, userID string) (string, error) {
+	if err := m.requireMfaBox(); err != nil {
+		return "", err
+	}
+	stored, err := m.store.Mfa().GetSecret(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	return m.mfaBox.Decrypt(stored)
+}
+
+func (m *Module) getDecryptedSecretWithRecovery(ctx context.Context, userID string) (string, []string, error) {
+	if err := m.requireMfaBox(); err != nil {
+		return "", nil, err
+	}
+	storedSecret, storedHashes, err := m.store.Mfa().GetWithRecovery(ctx, userID)
+	if err != nil {
+		return "", nil, err
+	}
+	secret, err := m.mfaBox.Decrypt(storedSecret)
+	if err != nil {
+		return "", nil, err
+	}
+	return secret, storedHashes, nil
+}
+
+func verifyAndConsumeRecovery(code string, stored []string) (remaining []string, ok bool) {
+	for i, hash := range stored {
+		if crypto.VerifyRecoveryCode(code, hash) {
+			return removeAt(stored, i), true
 		}
 	}
+	return stored, false
+}
+
+func removeAt(items []string, index int) []string {
+	out := make([]string, 0, len(items)-1)
+	out = append(out, items[:index]...)
+	out = append(out, items[index+1:]...)
 	return out
 }

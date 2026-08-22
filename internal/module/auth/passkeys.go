@@ -3,21 +3,21 @@ package auth
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
+	aoserrors "github.com/Esubalew-Sintie/aos-auth-go/internal/constant/errors"
 	"github.com/Esubalew-Sintie/aos-auth-go/internal/constant/dto/response"
 	webauthnplatform "github.com/Esubalew-Sintie/aos-auth-go/internal/platform/webauthn"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 func (m *Module) loadWebAuthnUser(ctx context.Context, userID string) (webauthnplatform.User, error) {
-	user, err := m.store.GetUserByID(ctx, userID)
+	user, err := m.store.Users().GetByID(ctx, userID)
 	if err != nil || user == nil {
-		return webauthnplatform.User{}, errors.New("user not found")
+		return webauthnplatform.User{}, aoserrors.ErrUserNotFound
 	}
 
-	records, err := m.store.GetPasskeyRecords(ctx, userID)
+	records, err := m.store.Passkeys().ListRecords(ctx, userID)
 	if err != nil {
 		return webauthnplatform.User{}, err
 	}
@@ -61,19 +61,19 @@ func (m *Module) storePasskeySession(ctx context.Context, userID string, session
 		expiresAt = session.Expires
 	}
 
-	return m.store.InsertPasskeyChallenge(ctx, userID, string(payload), expiresAt)
+	return m.store.Passkeys().InsertChallenge(ctx, userID, string(payload), expiresAt)
 }
 
 func (m *Module) loadPasskeySession(ctx context.Context, userID string) (webauthn.SessionData, error) {
-	raw, err := m.store.GetPasskeyChallenge(ctx, userID)
+	raw, err := m.store.Passkeys().GetChallenge(ctx, userID)
 	if err != nil {
-		return webauthn.SessionData{}, errors.New("challenge expired or not found")
+		return webauthn.SessionData{}, aoserrors.ErrPasskeyChallengeExpired
 	}
 
 	var session webauthn.SessionData
 	if err := json.Unmarshal([]byte(raw), &session); err != nil {
-		_ = m.store.DeletePasskeyChallenge(ctx, userID)
-		return webauthn.SessionData{}, errors.New("passkey session expired, please start registration again")
+		_ = m.store.Passkeys().DeleteChallenge(ctx, userID)
+		return webauthn.SessionData{}, aoserrors.ErrPasskeySessionExpired
 	}
 
 	return session, nil
@@ -81,7 +81,7 @@ func (m *Module) loadPasskeySession(ctx context.Context, userID string) (webauth
 
 func (m *Module) GenerateRegistrationOptions(ctx context.Context, userID string) (any, error) {
 	if m.webauthn == nil {
-		return nil, errors.New("webauthn is not configured")
+		return nil, aoserrors.ErrWebAuthnNotConfigured
 	}
 
 	user, err := m.loadWebAuthnUser(ctx, userID)
@@ -103,7 +103,7 @@ func (m *Module) GenerateRegistrationOptions(ctx context.Context, userID string)
 
 func (m *Module) VerifyRegistration(ctx context.Context, userID string, payload []byte) (response.PasskeyVerification, error) {
 	if m.webauthn == nil {
-		return response.PasskeyVerification{Verified: false}, errors.New("webauthn is not configured")
+		return response.PasskeyVerification{Verified: false}, aoserrors.ErrWebAuthnNotConfigured
 	}
 
 	user, err := m.loadWebAuthnUser(ctx, userID)
@@ -127,7 +127,7 @@ func (m *Module) VerifyRegistration(ctx context.Context, userID string, payload 
 		deviceName = "Passkey"
 	}
 
-	if err := m.store.InsertPasskey(
+	if err := m.store.Passkeys().Insert(
 		ctx,
 		userID,
 		credentialID,
@@ -140,29 +140,30 @@ func (m *Module) VerifyRegistration(ctx context.Context, userID string, payload 
 		return response.PasskeyVerification{Verified: false}, err
 	}
 
-	_ = m.store.DeletePasskeyChallenge(ctx, userID)
+	_ = m.store.Passkeys().DeleteChallenge(ctx, userID)
 	return response.PasskeyVerification{Verified: true}, nil
 }
 
 func (m *Module) GenerateAuthenticationOptions(ctx context.Context, email string) (any, error) {
 	if m.webauthn == nil {
-		return nil, errors.New("webauthn is not configured")
+		return nil, aoserrors.ErrWebAuthnNotConfigured
 	}
 
-	userID, err := m.store.GetUserIDByEmail(ctx, email)
+	user, err := m.store.Users().GetByEmail(ctx, email)
 	if err != nil {
-		return nil, errors.New("no passkeys registered for this account")
+		return nil, aoserrors.ErrNoPasskeysRegistered
 	}
 
-	user, err := m.loadWebAuthnUser(ctx, userID)
+	userID := user.ID
+	webauthnUser, err := m.loadWebAuthnUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	if len(user.Credentials) == 0 {
-		return nil, errors.New("no passkeys registered for this account")
+	if len(webauthnUser.Credentials) == 0 {
+		return nil, aoserrors.ErrNoPasskeysRegistered
 	}
 
-	options, session, err := m.webauthn.BeginLogin(user)
+	options, session, err := m.webauthn.BeginLogin(webauthnUser)
 	if err != nil {
 		return nil, err
 	}
@@ -176,15 +177,16 @@ func (m *Module) GenerateAuthenticationOptions(ctx context.Context, email string
 
 func (m *Module) VerifyAuthentication(ctx context.Context, email string, payload []byte) (map[string]string, error) {
 	if m.webauthn == nil {
-		return nil, errors.New("webauthn is not configured")
+		return nil, aoserrors.ErrWebAuthnNotConfigured
 	}
 
-	userID, err := m.store.GetUserIDByEmail(ctx, email)
+	user, err := m.store.Users().GetByEmail(ctx, email)
 	if err != nil {
-		return nil, errors.New("authentication failed")
+		return nil, aoserrors.ErrPasskeyAuthenticationFailed
 	}
+	userID := user.ID
 
-	user, err := m.loadWebAuthnUser(ctx, userID)
+	webauthnUser, err := m.loadWebAuthnUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -194,22 +196,23 @@ func (m *Module) VerifyAuthentication(ctx context.Context, email string, payload
 		return nil, err
 	}
 
-	credential, err := m.webauthn.FinishLogin(user, session, payload)
+	credential, err := m.webauthn.FinishLogin(webauthnUser, session, payload)
 	if err != nil {
 		return nil, err
 	}
 
 	credentialID, _, signCount := webauthnplatform.CredentialToStorage(credential)
-	if err := m.store.UpdatePasskeySignCount(ctx, userID, credentialID, signCount); err != nil {
+	if err := m.store.Passkeys().UpdateSignCount(ctx, userID, credentialID, signCount); err != nil {
 		return nil, err
 	}
 
-	_ = m.store.DeletePasskeyChallenge(ctx, userID)
+	_ = m.store.Passkeys().DeleteChallenge(ctx, userID)
 
 	sessionToken, err := m.createSession(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
+	_ = m.autoSetActiveOrganization(ctx, sessionToken, userID)
 
 	return map[string]string{
 		"session_token": sessionToken,

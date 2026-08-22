@@ -1,140 +1,100 @@
-# AOS Go SDK v2
+# AOS Go SDK
 
-AOS provides **identity infrastructure**. Your application owns **business structure**.
+**Modular inside, simple outside** — embedded Auth + AuthZ for Go applications.
 
-## Packages
+Your app owns URLs, business tables, and domain permissions. AOS provides sessions, organizations (optional), and RBAC primitives.
 
-| Package | npm / Go module | Role |
-|---------|-----------------|------|
-| Go SDK | `github.com/Esubalew-Sintie/aos-auth-go` | Backend embedded platform |
-| Frontend client | `aos-auth` | Login, MFA, passkeys, authz, session context |
-| CLI | `aos-cli` (`aos` command) | Migrate, bootstrap, scaffold |
+**→ Start here: [`DEVELOPER.md`](./DEVELOPER.md)** — full integration guide.
 
-```bash
-go get github.com/Esubalew-Sintie/aos-auth-go@v0.1.0
-npm install aos-auth aos-cli
-```
+**→ API surface: [`SUPPORTED_API.md`](./SUPPORTED_API.md)** — supported vs deprecated exports (v0.3).
+
+See also: [`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`SCHEMA.md`](./SCHEMA.md)
+
+---
 
 ## Quick start
 
 ```go
-aos, err := aos.New(ctx, aos.Config{DatabaseURL: os.Getenv("DATABASE_URL")})
-if err != nil { log.Fatal(err) }
-
-_ = aos.Migrate(ctx)
-result, err := aos.Bootstrap(ctx, aos.BootstrapInput{
-    TenantName: "My Application",
-    Owner: aos.BootstrapOwner{
-        Email:    "owner@example.com",
-        Password: "secure-password",
+sdk, err := aos.New(ctx, aos.Config{
+    DatabaseURL: os.Getenv("DATABASE_URL"),
+    Organization: &aos.OrganizationConfig{
+        Enabled: true,
     },
 })
+sdk.Migrate(ctx)
 
-http.Handle("/aos/", http.StripPrefix("/aos", aos.Router()))
+// Option 1: all default /v1/* routes
+http.ListenAndServe(":8080", sdk.Handler())
+
+// Option 2: your own URLs (recommended)
+handlers := sdk.Handlers()
+requireSession := sdk.Middleware().RequireSession()
+// mount handlers.Auth().Login, etc.
 ```
 
-## Bootstrap (Owner + `*` only)
+Run locally:
 
-`Bootstrap` creates:
-- Tenant + IAM tenant resource
-- Role **Owner** with permission `*`
-- Owner user with tenant membership + role assignment
+```bash
+export DATABASE_URL=postgres://...
+go run ./cmd/devserver      # default routes
+go run ./cmd/embedserver    # custom routes example
+```
 
-No business roles (Merchant Admin, Customer, etc.) are seeded.
+---
 
-## Registration (identity only)
+## What you get
+
+| Layer | SDK surface |
+|-------|-------------|
+| Auth | `Handlers().Auth()`, `Auth().SignUp/Login/Logout` |
+| Organizations | `OrganizationConfig`, `Handlers().Organizations()`, `Organizations().Create` |
+| Authorization | `Middleware().RequirePermission`, `Authz().Can` |
+| Admin | `Handlers().Management()` |
+| Migrations | `Migrate(ctx)` |
+
+---
+
+## Configuration (essentials)
 
 ```go
-out, err := aos.Auth().SignUp(ctx, aos.RegisterInput{
-    Email:    "user@example.com",
-    Password: "password",
-    TenantID: tenantID,
-})
+aos.Config{
+    DatabaseURL: "...",
+    Organization: &aos.OrganizationConfig{
+        Enabled:              true,
+        AutoSetActiveOnLogin: aos.Bool(true), // default when Enabled
+    },
+    Auth: aos.AuthConfig{
+        Password: aos.Bool(true),
+        MFA:      &aos.MFAConfig{EncryptionKey: os.Getenv("MFA_ENCRYPTION_KEY")},
+        Passkey:  &aos.PasskeyConfig{RPID: "localhost", Origins: []string{"http://localhost:3000"}},
+    },
+}
 ```
 
-Register creates **user + session** and emits `user.created`. It does **not** assign roles or memberships.
+---
 
-### Post-register hook (your application)
+## HTTP vs programmatic
 
-```go
-aos.Events().On(events.EventUserCreated, func(ctx context.Context, payload any) error {
-    e := payload.(events.UserCreatedEvent)
-    // 1. Register business permissions
-    // 2. Create resource (merchant, team, etc.)
-    // 3. Add membership + assign role
-    return nil
-})
-```
+| Use case | Approach |
+|----------|----------|
+| REST API for frontend | `sdk.Handlers()` + your router + middleware |
+| Internal / gRPC / jobs | `sdk.Auth()`, `sdk.Authz()`, `sdk.Organizations()` |
+| Prototype / dev | `sdk.Handler()` |
 
-## Authorization
+---
 
-```go
-allowed, err := aos.Authz().Can(ctx, aos.AuthzInput{
-    UserID:     userID,
-    ResourceID: merchantID,
-    Permission: "payment.refund",
-})
-```
+## Packages
 
-HTTP: `POST /v1/authz/can` with `{ "resource_id", "permission" }`.
+| Import | Role |
+|--------|------|
+| `github.com/Esubalew-Sintie/aos-auth-go` | Public SDK |
 
-## Programmatic IAM
+---
 
-```go
-_, _ = aos.Permissions().Register(ctx, aos.RegisterPermissionInput{Code: "payment.refund"})
-roleID, _ := aos.Roles().Create(ctx, aos.CreateRoleInput{TenantID: tid, Name: "Finance"})
-_ = aos.Roles().Grant(ctx, roleID, "payment.refund")
+## Examples in this repo
 
-iamID, _ := aos.Resources().IAMResourceID(ctx, merchantID, "ORGANIZATION")
-_, _ = aos.Memberships().Add(ctx, aos.AddMembershipInput{
-    TenantID: tid, UserID: uid, ResourceType: "ORGANIZATION",
-    ResourceID: merchantID, RoleID: roleID, IAMResource: iamID,
-})
-```
-
-## Session context
-
-```go
-_, err := aos.Auth().SetActiveResource(ctx, aos.SetContextInput{
-    SessionToken: token,
-    ResourceID:   merchantID,
-})
-```
-
-HTTP: `POST /v1/auth/set-context` (alias: `/v1/auth/switch-organization`).
-
-## Public API surface
-
-| Method | Purpose |
-|--------|---------|
-| `aos.Auth()` | SignUp, Login, Logout, ValidateSession, SetActiveResource |
-| `aos.Authz()` | Can (alias: `aos.IAM()`) |
-| `aos.Permissions()` | Register permission codes |
-| `aos.Roles()` | Create roles, Grant permissions |
-| `aos.Resources()` | Create IAM resources, lookup IAM IDs |
-| `aos.Memberships()` | Add membership, AssignRole |
-| `aos.Organizations()` | Create org, Invite |
-| `aos.Events()` | In-process event bus |
-| `aos.Context()` | ListOrganizations, ListPermissions, ListOrgMembers (app portal helpers) |
-| `aos.Middleware()` | RequireSession, RequirePermission |
-
-## Permission wildcards
-
-| Granted | Matches |
-|---------|---------|
-| `*` | everything |
-| `payment.*` | `payment.read`, `payment.refund`, … |
-| `payment.read` | exact only |
-
-DENY beats ALLOW in the authorization engine.
-
-## Deprecated
-
-- Tenant templates (`SAAS_PLATFORM`, etc.) — no longer used by bootstrap
-- `/v1/me/*` — reference-portal routes; use `/v1/authz/can` + app APIs
-- `portal_context` in auth responses
-- `aos.IAM()` — use `aos.Authz()`
-
-## Full example
-
-See [`examples/payment-gateway`](../../examples/payment-gateway/README.md) — self-service merchant signup, business IAM seeding, and `payment.refund` authorization.
+| Path | Description |
+|------|-------------|
+| [`cmd/devserver`](./cmd/devserver/main.go) | Default `/v1/*` routes, orgs enabled |
+| [`cmd/embedserver`](./cmd/embedserver/main.go) | Custom paths, session + permission groups |
+| [`DEVELOPER.md`](./DEVELOPER.md) | Complete developer guide |
