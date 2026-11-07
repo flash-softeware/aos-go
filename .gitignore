@@ -1,16 +1,3 @@
-# Binaries
-*.exe
+.env
 *.test
 *.out
-/embedserver
-/devserver
-/cmd/devserver/devserver
-/cmd/embedserver/embedserver
-
-# IDE
-.idea/
-.vscode/
-*.swp
-
-# OS
-.DS_Store
