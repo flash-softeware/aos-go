@@ -7,7 +7,7 @@ import (
 
 // Auth is everything an application does with AOS. *Client (the engine
 // over HTTP, such as the hosted service) has these methods, and so does
-// the embedded engine (github.com/Esubalew-Sintie/aos/embed). Write
+// the embedded engine (github.com/flash-softeware/aos/embed). Write
 // application code against Auth to switch between them with one line.
 type Auth interface {
 	// Requests
