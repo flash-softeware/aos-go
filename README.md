@@ -3,11 +3,11 @@
 The Go SDK for AOS, the identity engine: check session tokens, ask about permissions, guard routes, and manage users, roles, organizations, API keys and webhooks. It has no dependencies outside the standard library.
 
 ```sh
-go get github.com/flash-softeware/aos-go
+go get github.com/flash-software-technology/aos-go
 ```
 
 ```go
-import aos "github.com/flash-softeware/aos-go"
+import aos "github.com/flash-software-technology/aos-go"
 
 client, err := aos.New(aos.Config{
     URL:            os.Getenv("AOS_URL"),             // the engine, such as the hosted service

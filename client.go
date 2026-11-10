@@ -48,7 +48,6 @@ type Client struct {
 	cfg  Config
 	base string
 	http *http.Client
-
 	mu        sync.Mutex
 	keys      map[string]keyEntry
 	keysAt    time.Time
@@ -184,4 +183,4 @@ func (c *Client) do(ctx context.Context, d door, method, path string, body, out 
 }
 
 // Version is the SDK version.
-const Version = "0.3.0"
+const Version = "0.4.0"

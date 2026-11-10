@@ -1,3 +1,3 @@
-module github.com/flash-softeware/aos-go
+module github.com/flash-software-technology/aos-go
 
 go 1.24
